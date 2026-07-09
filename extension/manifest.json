@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "moz-agent",
+  "version": "0.1.0",
+  "description": "Agentic browser session connector - stub",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "moz-agent@oziabr.dev",
+      "strict_min_version": "115.0"
+    }
+  },
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "moz-agent"
+  },
+  "permissions": ["storage", "tabs"],
+  "host_permissions": ["<all_urls>"]
+}
