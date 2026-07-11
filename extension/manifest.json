@@ -6,7 +6,10 @@
   "browser_specific_settings": {
     "gecko": {
       "id": "moz-agent@oziabr.dev",
-      "strict_min_version": "115.0"
+      "strict_min_version": "128.0",
+      "data_collection_permissions": {
+        "required": ["none"]
+      }
     }
   },
   "background": {
@@ -17,5 +20,5 @@
     "default_title": "moz-agent"
   },
   "permissions": ["storage", "tabs"],
-  "host_permissions": ["<all_urls>"]
+  "optional_host_permissions": ["*://*/*"]
 }

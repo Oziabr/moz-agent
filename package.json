@@ -4,11 +4,16 @@
   "private": true,
   "description": "Agentic Firefox extension - connects to user browser sessions",
   "scripts": {
+    "build:ext": "node build.js",
     "lint": "web-ext lint --source-dir=extension",
-    "build": "web-ext build --source-dir=extension --artifacts-dir=dist",
-    "run": "web-ext run --source-dir=extension"
+    "build": "npm run build:ext && web-ext build --source-dir=extension --artifacts-dir=dist",
+    "run": "npm run build:ext && web-ext run --source-dir=extension"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0"
   },
   "devDependencies": {
+    "esbuild": "^0.23.0",
     "web-ext": "^8.3.0"
   }
 }

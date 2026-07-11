@@ -7,7 +7,19 @@
   </head>
   <body>
     <h1>moz-agent</h1>
-    <p id="status">idle</p>
+    <p id="domain" class="domain"></p>
+    <p id="status" class="status"></p>
+
+    <label class="toggle-row">
+      <span>Enable on this domain</span>
+      <input type="checkbox" id="enable-toggle">
+    </label>
+
+    <label class="toggle-row">
+      <span>Allow form submission</span>
+      <input type="checkbox" id="write-toggle">
+    </label>
+
     <script src="popup.js"></script>
   </body>
 </html>
