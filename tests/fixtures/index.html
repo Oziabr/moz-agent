@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+  <head><meta charset="utf-8"><title>moz-agent test fixture</title></head>
+  <body>
+    <h1>moz-agent test fixture</h1>
+    <script>
+      let nextId = 0
+      const pending = new Map()
+
+      window.addEventListener('moz-agent-test-response', event => {
+        const { id, result } = event.detail
+        const resolve = pending.get(id)
+        if (!resolve) return
+        pending.delete(id)
+        resolve(result)
+      })
+
+      window.mozAgentTest = {
+        call: (type, payload = {}) => new Promise(resolve => {
+          const id = nextId++
+          pending.set(id, resolve)
+          window.dispatchEvent(new CustomEvent('moz-agent-test-request', { detail: { id, type, ...payload } }))
+        })
+      }
+    </script>
+  </body>
+</html>
