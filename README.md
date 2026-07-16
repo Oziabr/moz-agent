@@ -16,8 +16,9 @@ execution (content-script dispatch) wired up yet.
   auth, polling
 - `extension/supabase-client.js` - thin `fetch` wrapper over Supabase's
   REST (PostgREST) and Auth (GoTrue) HTTP APIs. No SDK, no build step.
-- `extension/config.js` - Supabase URL/key and project page origin
-  (placeholders, fill in your own)
+- `extension/config.example.js` - template for Supabase URL/key and project
+  page origin; copy to `extension/config.js` (gitignored) and fill in real
+  values, see [Dev](#dev)
 - `extension/auth-bridge.js` - content script that relays a session from
   the project page (see [Auth](#auth))
 - `extension/test-bridge.js` - content script used only by the test suite
@@ -61,6 +62,28 @@ rather than subscribing to Realtime.
 
 ```
 npm install
+cp extension/config.example.js extension/config.js
+```
+
+Then fill in `extension/config.js` with your real values:
+
+- `SUPABASE_URL` / `SUPABASE_ANON_KEY` - Supabase dashboard -> your project ->
+  **Project Settings -> API** -> "Project URL" and "anon public" key. The
+  anon key is meant to be exposed client-side (RLS is the actual security
+  boundary, not key secrecy) - safe to ship inside the extension - but
+  `config.js` is still gitignored so your specific project isn't published
+  in this repo's history.
+- `PROJECT_PAGE_ORIGIN` - see [Auth](#auth) below; must also match the
+  `host_permissions` / `content_scripts` entry in `extension/manifest.json`.
+
+`extension/config.js` is required at runtime - `supabase-client.js` and
+`popup.js` import it directly, no build step substitutes it in. If it's
+missing, the background script fails to load entirely once it actually
+imports `supabase-client.js`. The e2e test suite doesn't need it (it swaps
+`supabase-client.js` for an in-memory stub that never touches Supabase), but
+`npm run run` / `npm run build` do.
+
+```
 npm run lint
 npm run run
 ```

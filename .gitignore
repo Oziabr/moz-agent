@@ -1,5 +1,6 @@
 node_modules
 dist
 .test-extension
+extension/config.js
 *.log
 .web-extension-id
