@@ -49,6 +49,7 @@ test('moz-agent e2e', async t => {
   })
 
   await driver.installAddon(prepareTestExtension(), true)
+  await driver.manage().setTimeouts({ script: 3000 })
   await driver.get(`http://127.0.0.1:${port}/`)
 
   await t.test('unknown domain defaults to disabled', async () => {
