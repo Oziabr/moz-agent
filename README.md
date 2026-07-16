@@ -40,6 +40,58 @@ npm run run
 DB usage examples (supabase-js calls paired with raw SQL equivalents) live
 in [`docs/db-examples.md`](docs/db-examples.md).
 
+## Auth
+
+The extension and the project page (your web dashboard) need to resolve to
+the same Supabase user, since RLS scopes every row in
+`moz_agent_enabled_domains` and `moz_agent_jobs` to `auth.uid()`. There's no
+anonymous fallback - an anonymous extension session would be invisible to
+the dashboard and vice versa, so the extension sits unauthenticated until
+it's explicitly connected.
+
+Flow:
+
+1. The project page handles real login (magic link / OAuth / password) with
+   its own `supabase-js` client, same as any web app.
+2. The project page cooperates by dispatching a DOM event from its own
+   `onAuthStateChange` listener:
+   ```js
+   supabase.auth.onAuthStateChange((event, session) => {
+     window.dispatchEvent(new CustomEvent('moz-agent-session', { detail: { session } }))
+   })
+   ```
+   `onAuthStateChange` fires once on load with the current session (or
+   `null`), so this covers "already logged in" too, no storage-format
+   sniffing required.
+3. `extension/src/auth-bridge.js`, a content script scoped only to
+   `PROJECT_PAGE_ORIGIN` (a required host permission, distinct from the
+   optional per-target-domain grants), relays that event to the background
+   script.
+4. Background adopts the session via `supabase.auth.setSession(...)`, or
+   signs out if the event carried `null`. Either way it resets the domain
+   cache, active job counts, and realtime subscriptions before reloading -
+   stale rows from a previous identity must never linger.
+
+Session persistence uses a `browser.storage.local`-backed storage adapter
+rather than the default `localStorage`, since Firefox can tear down and
+respawn MV3 event pages when idle and a plain `localStorage` session
+wouldn't reliably survive that.
+
+Before this works you need to fill in `PROJECT_PAGE_ORIGIN` in
+`extension/src/config.js` and the matching `host_permissions` /
+`content_scripts` entries in `extension/manifest.json` with your real
+project page domain (both currently point at the `app.moz-agent.example`
+placeholder).
+
+Passing the session through a content script rather than exchanging a
+short-lived code is the simpler of two reasonable designs - it's safe
+specifically because the bridge is scoped to your own trusted origin
+(Firefox content scripts run in an isolated JS world, page script can't read
+them back out), but it does mean tokens transit the page's DOM event system.
+If that tradeoff stops being comfortable later, swapping to a
+server-exchanged linking code is a contained change to `auth-bridge.js`
+and `handleAuthHandoff`, not a schema change.
+
 ## Testing
 
 E2E tests drive a real Firefox via Selenium + geckodriver (`driver.installAddon`,

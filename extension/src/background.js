@@ -10,10 +10,36 @@ const BADGE_COLOR_WRITE = '#D9822B'
 const BADGE_COLOR_JOBS = '#3FB68B'
 const BADGE_COLOR_MISMATCH = '#E2504A'
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+// MV3 event pages in Firefox can be torn down and respawned when idle, so
+// session persistence rides on browser.storage.local rather than the
+// default localStorage - it survives across those restarts reliably.
+const browserStorageAdapter = {
+  getItem: async key => {
+    const result = await browser.storage.local.get(key)
+    return result[key] ?? null
+  },
+  setItem: async (key, value) => {
+    await browser.storage.local.set({ [key]: value })
+  },
+  removeItem: async key => {
+    await browser.storage.local.remove(key)
+  }
+}
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: {
+    storage: browserStorageAdapter,
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: false
+  }
+})
 
 const domainCache = new Map()
 let activeJobCounts = new Map()
+let isAuthenticated = false
+let domainsChannel = null
+let jobsChannel = null
 
 const getHostname = url => {
   try {
@@ -56,6 +82,11 @@ const refreshActiveTabBadge = async () => {
 }
 
 const loadDomainState = async () => {
+  if (!isAuthenticated) {
+    domainCache.clear()
+    return
+  }
+
   const { data, error } = await supabase.from(TABLE_DOMAINS).select('*')
   if (error) {
     console.error('moz-agent: failed to load enabled domains', error)
@@ -77,6 +108,12 @@ const loadDomainState = async () => {
 }
 
 const refreshJobCounts = async () => {
+  if (!isAuthenticated) {
+    activeJobCounts = new Map()
+    await refreshActiveTabBadge()
+    return
+  }
+
   const { data, error } = await supabase
     .from(TABLE_JOBS)
     .select('domain')
@@ -93,6 +130,8 @@ const refreshJobCounts = async () => {
 }
 
 const setDomainEnabled = async (domain, enabled) => {
+  if (!isAuthenticated) return { ok: false, reason: 'not authenticated' }
+
   if (enabled) {
     const granted = await requestHostPermission(domain)
     if (!granted) return { ok: false, reason: 'permission request denied' }
@@ -115,6 +154,8 @@ const setDomainEnabled = async (domain, enabled) => {
 }
 
 const setDomainWrite = async (domain, allowWrite) => {
+  if (!isAuthenticated) return { ok: false, reason: 'not authenticated' }
+
   const state = domainCache.get(domain)
   if (!state || !state.enabled) return { ok: false, reason: 'domain is not enabled' }
 
@@ -134,22 +175,75 @@ const loadDomainStateAndRefresh = async () => {
   await refreshActiveTabBadge()
 }
 
+const teardownRealtime = () => {
+  if (domainsChannel) supabase.removeChannel(domainsChannel)
+  if (jobsChannel) supabase.removeChannel(jobsChannel)
+  domainsChannel = null
+  jobsChannel = null
+}
+
 const subscribeRealtime = () => {
-  supabase
+  if (!isAuthenticated) return
+
+  domainsChannel = supabase
     .channel('moz_agent_enabled_domains_changes')
     .on('postgres_changes', { event: '*', schema: 'public', table: TABLE_DOMAINS }, loadDomainStateAndRefresh)
     .subscribe()
 
-  supabase
+  jobsChannel = supabase
     .channel('moz_agent_jobs_changes')
     .on('postgres_changes', { event: '*', schema: 'public', table: TABLE_JOBS }, refreshJobCounts)
     .subscribe()
+}
+
+// called on startup (existing persisted session) and whenever the auth
+// bridge relays a session change from the project page. resets everything
+// scoped to the previous identity before loading the new one - RLS means
+// stale cached rows from a different user must never linger.
+const applyAuthState = async () => {
+  const { data: { session } } = await supabase.auth.getSession()
+  isAuthenticated = Boolean(session)
+
+  teardownRealtime()
+  domainCache.clear()
+  activeJobCounts = new Map()
+
+  if (isAuthenticated) {
+    await loadDomainState()
+    await refreshJobCounts()
+    subscribeRealtime()
+  }
+
+  await refreshActiveTabBadge()
+}
+
+const handleAuthHandoff = async session => {
+  if (session) {
+    const { error } = await supabase.auth.setSession({
+      access_token: session.access_token,
+      refresh_token: session.refresh_token
+    })
+    if (error) {
+      console.error('moz-agent: failed to adopt session from project page', error)
+      return { ok: false, reason: error.message }
+    }
+  } else {
+    await supabase.auth.signOut()
+  }
+
+  await applyAuthState()
+  return { ok: true }
 }
 
 const handleMessage = (message, sender, sendResponse) => {
   if (message.type === 'getState') {
     const state = domainCache.get(message.domain) || { enabled: false, allowWrite: false }
     sendResponse(state)
+    return false
+  }
+
+  if (message.type === 'getAuthState') {
+    sendResponse({ authenticated: isAuthenticated })
     return false
   }
 
@@ -167,6 +261,13 @@ const handleMessage = (message, sender, sendResponse) => {
     return true
   }
 
+  if (message.type === 'authHandoff') {
+    handleAuthHandoff(message.session)
+      .then(sendResponse)
+      .catch(err => sendResponse({ ok: false, reason: err.message }))
+    return true
+  }
+
   return false
 }
 
@@ -177,13 +278,4 @@ browser.tabs.onUpdated.addListener((tabId, info) => {
 })
 browser.windows.onFocusChanged.addListener(refreshActiveTabBadge)
 
-const init = async () => {
-  const { data: { session } } = await supabase.auth.getSession()
-  if (!session) await supabase.auth.signInAnonymously()
-  await loadDomainState()
-  await refreshJobCounts()
-  await refreshActiveTabBadge()
-  subscribeRealtime()
-}
-
-init()
+applyAuthState()

@@ -1,10 +1,16 @@
 (() => {
+  // extension/src/config.js
+  var PROJECT_PAGE_ORIGIN = "https://app.moz-agent.example";
+
   // extension/src/popup.js
   var els = {
     domain: document.getElementById("domain"),
     status: document.getElementById("status"),
     enableToggle: document.getElementById("enable-toggle"),
-    writeToggle: document.getElementById("write-toggle")
+    writeToggle: document.getElementById("write-toggle"),
+    toggles: document.getElementById("toggles"),
+    connect: document.getElementById("connect"),
+    connectButton: document.getElementById("connect-button")
   };
   var getCurrentDomain = async () => {
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
@@ -45,7 +51,23 @@
     const nextState = await browser.runtime.sendMessage({ type: "getState", domain });
     renderState(domain, nextState);
   };
+  var showConnectPrompt = () => {
+    els.connect.hidden = false;
+    els.toggles.hidden = true;
+    els.domain.textContent = "";
+    els.status.textContent = "not connected";
+  };
+  var showToggles = () => {
+    els.connect.hidden = true;
+    els.toggles.hidden = false;
+  };
   var load = async () => {
+    const { authenticated } = await browser.runtime.sendMessage({ type: "getAuthState" });
+    if (!authenticated) {
+      showConnectPrompt();
+      return;
+    }
+    showToggles();
     const domain = await getCurrentDomain();
     if (!domain) {
       els.domain.textContent = "no domain";
@@ -59,5 +81,6 @@
     els.enableToggle.onchange = onEnableChange(domain);
     els.writeToggle.onchange = onWriteChange(domain);
   };
+  els.connectButton.onclick = () => browser.tabs.create({ url: PROJECT_PAGE_ORIGIN });
   document.addEventListener("DOMContentLoaded", load);
 })();

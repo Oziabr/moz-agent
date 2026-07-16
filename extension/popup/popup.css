@@ -30,3 +30,17 @@ h1 {
   padding: 6px 0;
   border-top: 1px solid #eee;
 }
+
+#connect-button {
+  width: 100%;
+  font-size: 12px;
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: #f7f7f5;
+  cursor: pointer;
+}
+
+#connect-button:hover {
+  background: #efefec;
+}

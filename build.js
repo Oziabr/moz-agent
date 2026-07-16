@@ -39,6 +39,7 @@ const buildOne = target =>
 const run = async () => {
   for (const target of targets) await buildOne(target)
   fs.copyFileSync('extension/src/test-bridge.js', 'extension/test-bridge.js')
+  fs.copyFileSync('extension/src/auth-bridge.js', 'extension/auth-bridge.js')
 }
 
 run().catch(err => {

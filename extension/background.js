@@ -3890,26 +3890,26 @@ ${cause.stack}`;
       this.schemaName = schema;
       this.urlLengthLimit = urlLengthLimit;
       const originalFetch = fetch$1 !== null && fetch$1 !== void 0 ? fetch$1 : globalThis.fetch;
-      if (timeout !== void 0 && timeout > 0) this.fetch = (input, init2) => {
+      if (timeout !== void 0 && timeout > 0) this.fetch = (input, init) => {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), timeout);
-        const existingSignal = init2 === null || init2 === void 0 ? void 0 : init2.signal;
+        const existingSignal = init === null || init === void 0 ? void 0 : init.signal;
         if (existingSignal) {
           if (existingSignal.aborted) {
             clearTimeout(timeoutId);
-            return originalFetch(input, init2);
+            return originalFetch(input, init);
           }
           const abortHandler = () => {
             clearTimeout(timeoutId);
             controller.abort();
           };
           existingSignal.addEventListener("abort", abortHandler, { once: true });
-          return originalFetch(input, _objectSpread2(_objectSpread2({}, init2), {}, { signal: controller.signal })).finally(() => {
+          return originalFetch(input, _objectSpread2(_objectSpread2({}, init), {}, { signal: controller.signal })).finally(() => {
             clearTimeout(timeoutId);
             existingSignal.removeEventListener("abort", abortHandler);
           });
         }
-        return originalFetch(input, _objectSpread2(_objectSpread2({}, init2), {}, { signal: controller.signal })).finally(() => clearTimeout(timeoutId));
+        return originalFetch(input, _objectSpread2(_objectSpread2({}, init), {}, { signal: controller.signal })).finally(() => clearTimeout(timeoutId));
       };
       else this.fetch = originalFetch;
       this.retry = retry;
@@ -19466,10 +19466,10 @@ ${suffix}`;
     const traceEnabled = (tracePropagationOptions === null || tracePropagationOptions === void 0 ? void 0 : tracePropagationOptions.enabled) === true;
     const respectSampling = (tracePropagationOptions === null || tracePropagationOptions === void 0 ? void 0 : tracePropagationOptions.respectSamplingDecision) !== false;
     const traceTargets = traceEnabled ? getDefaultPropagationTargets(supabaseUrl) : null;
-    return async (input, init2) => {
+    return async (input, init) => {
       var _await$getAccessToken;
       const accessToken = (_await$getAccessToken = await getAccessToken()) !== null && _await$getAccessToken !== void 0 ? _await$getAccessToken : supabaseKey;
-      let headers = new HeadersConstructor(init2 === null || init2 === void 0 ? void 0 : init2.headers);
+      let headers = new HeadersConstructor(init === null || init === void 0 ? void 0 : init.headers);
       if (!headers.has("apikey")) headers.set("apikey", supabaseKey);
       if (!headers.has("Authorization")) headers.set("Authorization", `Bearer ${accessToken}`);
       if (traceTargets) {
@@ -19480,7 +19480,7 @@ ${suffix}`;
           if (traceHeaders.baggage && !headers.has("baggage")) headers.set("baggage", traceHeaders.baggage);
         }
       }
-      return fetch$1(input, _objectSpread23(_objectSpread23({}, init2), {}, { headers }));
+      return fetch$1(input, _objectSpread23(_objectSpread23({}, init), {}, { headers }));
     };
   };
   async function getTraceHeaders(input, targets, respectSampling) {
@@ -19992,9 +19992,31 @@ ${suffix}`;
   var BADGE_COLOR_WRITE = "#D9822B";
   var BADGE_COLOR_JOBS = "#3FB68B";
   var BADGE_COLOR_MISMATCH = "#E2504A";
-  var supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  var browserStorageAdapter = {
+    getItem: async (key) => {
+      const result = await browser.storage.local.get(key);
+      return result[key] ?? null;
+    },
+    setItem: async (key, value) => {
+      await browser.storage.local.set({ [key]: value });
+    },
+    removeItem: async (key) => {
+      await browser.storage.local.remove(key);
+    }
+  };
+  var supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: {
+      storage: browserStorageAdapter,
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: false
+    }
+  });
   var domainCache = /* @__PURE__ */ new Map();
   var activeJobCounts = /* @__PURE__ */ new Map();
+  var isAuthenticated = false;
+  var domainsChannel = null;
+  var jobsChannel = null;
   var getHostname = (url) => {
     try {
       return new URL(url).hostname;
@@ -20026,6 +20048,10 @@ ${suffix}`;
     await setBadgeForTab(tab.id, domain);
   };
   var loadDomainState = async () => {
+    if (!isAuthenticated) {
+      domainCache.clear();
+      return;
+    }
     const { data, error } = await supabase.from(TABLE_DOMAINS).select("*");
     if (error) {
       console.error("moz-agent: failed to load enabled domains", error);
@@ -20042,6 +20068,11 @@ ${suffix}`;
     });
   };
   var refreshJobCounts = async () => {
+    if (!isAuthenticated) {
+      activeJobCounts = /* @__PURE__ */ new Map();
+      await refreshActiveTabBadge();
+      return;
+    }
     const { data, error } = await supabase.from(TABLE_JOBS).select("domain").in("status", ["pending", "claimed"]);
     if (error) {
       console.error("moz-agent: failed to load job counts", error);
@@ -20053,6 +20084,7 @@ ${suffix}`;
     await refreshActiveTabBadge();
   };
   var setDomainEnabled = async (domain, enabled) => {
+    if (!isAuthenticated) return { ok: false, reason: "not authenticated" };
     if (enabled) {
       const granted = await requestHostPermission(domain);
       if (!granted) return { ok: false, reason: "permission request denied" };
@@ -20070,6 +20102,7 @@ ${suffix}`;
     return { ok: true };
   };
   var setDomainWrite = async (domain, allowWrite) => {
+    if (!isAuthenticated) return { ok: false, reason: "not authenticated" };
     const state = domainCache.get(domain);
     if (!state || !state.enabled) return { ok: false, reason: "domain is not enabled" };
     const { error } = await supabase.from(TABLE_DOMAINS).update({ allow_write: allowWrite }).eq("domain", domain);
@@ -20082,14 +20115,54 @@ ${suffix}`;
     await loadDomainState();
     await refreshActiveTabBadge();
   };
+  var teardownRealtime = () => {
+    if (domainsChannel) supabase.removeChannel(domainsChannel);
+    if (jobsChannel) supabase.removeChannel(jobsChannel);
+    domainsChannel = null;
+    jobsChannel = null;
+  };
   var subscribeRealtime = () => {
-    supabase.channel("moz_agent_enabled_domains_changes").on("postgres_changes", { event: "*", schema: "public", table: TABLE_DOMAINS }, loadDomainStateAndRefresh).subscribe();
-    supabase.channel("moz_agent_jobs_changes").on("postgres_changes", { event: "*", schema: "public", table: TABLE_JOBS }, refreshJobCounts).subscribe();
+    if (!isAuthenticated) return;
+    domainsChannel = supabase.channel("moz_agent_enabled_domains_changes").on("postgres_changes", { event: "*", schema: "public", table: TABLE_DOMAINS }, loadDomainStateAndRefresh).subscribe();
+    jobsChannel = supabase.channel("moz_agent_jobs_changes").on("postgres_changes", { event: "*", schema: "public", table: TABLE_JOBS }, refreshJobCounts).subscribe();
+  };
+  var applyAuthState = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    isAuthenticated = Boolean(session);
+    teardownRealtime();
+    domainCache.clear();
+    activeJobCounts = /* @__PURE__ */ new Map();
+    if (isAuthenticated) {
+      await loadDomainState();
+      await refreshJobCounts();
+      subscribeRealtime();
+    }
+    await refreshActiveTabBadge();
+  };
+  var handleAuthHandoff = async (session) => {
+    if (session) {
+      const { error } = await supabase.auth.setSession({
+        access_token: session.access_token,
+        refresh_token: session.refresh_token
+      });
+      if (error) {
+        console.error("moz-agent: failed to adopt session from project page", error);
+        return { ok: false, reason: error.message };
+      }
+    } else {
+      await supabase.auth.signOut();
+    }
+    await applyAuthState();
+    return { ok: true };
   };
   var handleMessage = (message, sender, sendResponse) => {
     if (message.type === "getState") {
       const state = domainCache.get(message.domain) || { enabled: false, allowWrite: false };
       sendResponse(state);
+      return false;
+    }
+    if (message.type === "getAuthState") {
+      sendResponse({ authenticated: isAuthenticated });
       return false;
     }
     if (message.type === "setEnabled") {
@@ -20100,6 +20173,10 @@ ${suffix}`;
       setDomainWrite(message.domain, message.allowWrite).then(sendResponse).catch((err) => sendResponse({ ok: false, reason: err.message }));
       return true;
     }
+    if (message.type === "authHandoff") {
+      handleAuthHandoff(message.session).then(sendResponse).catch((err) => sendResponse({ ok: false, reason: err.message }));
+      return true;
+    }
     return false;
   };
   browser.runtime.onMessage.addListener(handleMessage);
@@ -20108,13 +20185,5 @@ ${suffix}`;
     if (info.status === "complete") refreshActiveTabBadge();
   });
   browser.windows.onFocusChanged.addListener(refreshActiveTabBadge);
-  var init = async () => {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) await supabase.auth.signInAnonymously();
-    await loadDomainState();
-    await refreshJobCounts();
-    await refreshActiveTabBadge();
-    subscribeRealtime();
-  };
-  init();
+  applyAuthState();
 })();

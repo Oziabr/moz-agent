@@ -20,6 +20,11 @@
       "matches": ["http://localhost/*"],
       "js": ["test-bridge.js"],
       "run_at": "document_start"
+    },
+    {
+      "matches": ["https://app.moz-agent.example/*"],
+      "js": ["auth-bridge.js"],
+      "run_at": "document_idle"
     }
   ],
   "action": {
@@ -27,5 +32,6 @@
     "default_title": "moz-agent"
   },
   "permissions": ["storage", "tabs"],
+  "host_permissions": ["https://app.moz-agent.example/*"],
   "optional_host_permissions": ["*://*/*"]
 }

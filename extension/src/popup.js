@@ -1,8 +1,13 @@
+import { PROJECT_PAGE_ORIGIN } from './config.js'
+
 const els = {
   domain: document.getElementById('domain'),
   status: document.getElementById('status'),
   enableToggle: document.getElementById('enable-toggle'),
-  writeToggle: document.getElementById('write-toggle')
+  writeToggle: document.getElementById('write-toggle'),
+  toggles: document.getElementById('toggles'),
+  connect: document.getElementById('connect'),
+  connectButton: document.getElementById('connect-button')
 }
 
 const getCurrentDomain = async () => {
@@ -50,7 +55,26 @@ const onWriteChange = domain => async () => {
   renderState(domain, nextState)
 }
 
+const showConnectPrompt = () => {
+  els.connect.hidden = false
+  els.toggles.hidden = true
+  els.domain.textContent = ''
+  els.status.textContent = 'not connected'
+}
+
+const showToggles = () => {
+  els.connect.hidden = true
+  els.toggles.hidden = false
+}
+
 const load = async () => {
+  const { authenticated } = await browser.runtime.sendMessage({ type: 'getAuthState' })
+  if (!authenticated) {
+    showConnectPrompt()
+    return
+  }
+  showToggles()
+
   const domain = await getCurrentDomain()
   if (!domain) {
     els.domain.textContent = 'no domain'
@@ -66,5 +90,7 @@ const load = async () => {
   els.enableToggle.onchange = onEnableChange(domain)
   els.writeToggle.onchange = onWriteChange(domain)
 }
+
+els.connectButton.onclick = () => browser.tabs.create({ url: PROJECT_PAGE_ORIGIN })
 
 document.addEventListener('DOMContentLoaded', load)

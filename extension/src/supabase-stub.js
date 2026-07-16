@@ -74,8 +74,11 @@ const fakeChannel = () => ({
 export const createClient = () => ({
   from: fromTable,
   channel: fakeChannel,
+  removeChannel: () => {},
   auth: {
     getSession: async () => ({ data: { session: { user: { id: 'test-user' } } } }),
+    setSession: async session => ({ data: { session: { user: { id: 'test-user' }, ...session } }, error: null }),
+    signOut: async () => ({ error: null }),
     signInAnonymously: async () => ({ data: { session: { user: { id: 'test-user' } } }, error: null })
   }
 })

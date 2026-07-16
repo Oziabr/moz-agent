@@ -10,15 +10,21 @@
     <p id="domain" class="domain"></p>
     <p id="status" class="status"></p>
 
-    <label class="toggle-row">
-      <span>Enable on this domain</span>
-      <input type="checkbox" id="enable-toggle">
-    </label>
+    <div id="connect" hidden>
+      <button id="connect-button">Connect your account</button>
+    </div>
 
-    <label class="toggle-row">
-      <span>Allow form submission</span>
-      <input type="checkbox" id="write-toggle">
-    </label>
+    <div id="toggles" hidden>
+      <label class="toggle-row">
+        <span>Enable on this domain</span>
+        <input type="checkbox" id="enable-toggle">
+      </label>
+
+      <label class="toggle-row">
+        <span>Allow form submission</span>
+        <input type="checkbox" id="write-toggle">
+      </label>
+    </div>
 
     <script src="popup.js"></script>
   </body>
