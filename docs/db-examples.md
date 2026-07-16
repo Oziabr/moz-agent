@@ -1,21 +1,21 @@
 # DB examples
 
-Each operation below is shown as a `supabase-js` call (what the extension
-actually runs) and the raw SQL equivalent (useful in the SQL editor, or a
-psql session, for debugging RLS/trigger behavior directly).
+Each operation below is shown as a call into `extension/supabase-client.js`
+(a thin `fetch` wrapper - see the [README](../README.md#why-no-bundler) for
+why there's no SDK) and the raw SQL equivalent (useful in the SQL editor, or
+a psql session, for debugging RLS/trigger behavior directly).
 
 `user_id` defaults to `auth.uid()`, which is only populated under an
-authenticated PostgREST/supabase-js request. Running the SQL directly as the
-`postgres` role means `auth.uid()` is null, so the samples below pass
-`user_id` explicitly - swap in a real user uuid.
+authenticated PostgREST request (i.e. with a real user's access token in the
+`Authorization` header). Running the SQL directly as the `postgres` role
+means `auth.uid()` is null, so the samples below pass `user_id` explicitly -
+swap in a real user uuid.
 
 ## Enable a domain (read-only, parse/crawl)
 
 ```js
-const enableDomain = (supabase, domain) =>
-  supabase
-    .from('moz_agent_enabled_domains')
-    .upsert({ domain, enabled: true }, { onConflict: 'user_id,domain' })
+const enableDomain = domain =>
+  upsertRow('moz_agent_enabled_domains', { domain, enabled: true }, { onConflict: 'user_id,domain' })
 ```
 
 ```sql
@@ -28,10 +28,12 @@ do update set enabled = true;
 ## Enable a domain for form submission too
 
 ```js
-const enableDomainForWrite = (supabase, domain) =>
-  supabase
-    .from('moz_agent_enabled_domains')
-    .upsert({ domain, enabled: true, allow_write: true }, { onConflict: 'user_id,domain' })
+const enableDomainForWrite = domain =>
+  upsertRow(
+    'moz_agent_enabled_domains',
+    { domain, enabled: true, allow_write: true },
+    { onConflict: 'user_id,domain' }
+  )
 ```
 
 ```sql
@@ -44,11 +46,8 @@ do update set enabled = true, allow_write = true;
 ## Disable a domain
 
 ```js
-const disableDomain = (supabase, domain) =>
-  supabase
-    .from('moz_agent_enabled_domains')
-    .update({ enabled: false, allow_write: false })
-    .eq('domain', domain)
+const disableDomain = domain =>
+  updateRows('moz_agent_enabled_domains', { enabled: false, allow_write: false }, { domain: eq(domain) })
 ```
 
 ```sql
@@ -58,24 +57,15 @@ where user_id = '<user-uuid>'
   and domain = 'example.com';
 ```
 
-## Subscribe to pending jobs over realtime
+## Poll for pending jobs
+
+No push/realtime - `background.js` polls on a `browser.alarms` timer
+instead (see the README). Same query either way:
 
 ```js
-const subscribeToJobs = (supabase, onJob) =>
-  supabase
-    .channel('moz_agent_jobs_pending')
-    .on('postgres_changes', {
-      event: 'INSERT',
-      schema: 'public',
-      table: 'moz_agent_jobs',
-      filter: 'status=eq.pending'
-    }, payload => onJob(payload.new))
-    .subscribe()
+const getPendingJobs = () =>
+  selectRows('moz_agent_jobs', { filters: { status: eq('pending') } })
 ```
-
-No SQL equivalent - this rides on Postgres logical replication under the
-hood, not a query you can run standalone. To see the same rows manually,
-just poll:
 
 ```sql
 select * from moz_agent_jobs
@@ -87,16 +77,16 @@ order by created_at;
 ## Claim a job
 
 Guards against a second instance grabbing the same row - the `status = 'pending'`
-check in the `where` clause means only one concurrent update wins.
+filter means only one concurrent update wins (PostgREST's `PATCH` only
+touches rows matching the filter at the time it runs).
 
 ```js
-const claimJob = (supabase, jobId, instanceId) =>
-  supabase
-    .from('moz_agent_jobs')
-    .update({ status: 'claimed', claimed_by: instanceId, claimed_at: new Date().toISOString() })
-    .eq('id', jobId)
-    .eq('status', 'pending')
-    .select()
+const claimJob = (jobId, instanceId) =>
+  updateRows(
+    'moz_agent_jobs',
+    { status: 'claimed', claimed_by: instanceId, claimed_at: new Date().toISOString() },
+    { id: eq(jobId), status: eq('pending') }
+  )
 ```
 
 ```sql
@@ -110,17 +100,11 @@ returning *;
 ## Resolve a job
 
 ```js
-const completeJob = (supabase, jobId, result) =>
-  supabase
-    .from('moz_agent_jobs')
-    .update({ status: 'done', result, completed_at: new Date().toISOString() })
-    .eq('id', jobId)
+const completeJob = (jobId, result) =>
+  updateRows('moz_agent_jobs', { status: 'done', result, completed_at: new Date().toISOString() }, { id: eq(jobId) })
 
-const failJob = (supabase, jobId, error) =>
-  supabase
-    .from('moz_agent_jobs')
-    .update({ status: 'failed', error, completed_at: new Date().toISOString() })
-    .eq('id', jobId)
+const failJob = (jobId, error) =>
+  updateRows('moz_agent_jobs', { status: 'failed', error, completed_at: new Date().toISOString() }, { id: eq(jobId) })
 ```
 
 ```sql
@@ -140,15 +124,11 @@ job - the `moz_agent_jobs_check_domain_permission` trigger rejects it
 otherwise.
 
 ```js
-const createParseJob = (supabase, domain, payload) =>
-  supabase
-    .from('moz_agent_jobs')
-    .insert({ domain, type: 'parse', payload })
+const createParseJob = (domain, payload) =>
+  upsertRow('moz_agent_jobs', { domain, type: 'parse', payload })
 
-const createSubmitJob = (supabase, domain, payload) =>
-  supabase
-    .from('moz_agent_jobs')
-    .insert({ domain, type: 'submit', payload })
+const createSubmitJob = (domain, payload) =>
+  upsertRow('moz_agent_jobs', { domain, type: 'submit', payload })
 ```
 
 ```sql

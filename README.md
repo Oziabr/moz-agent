@@ -1,19 +1,48 @@
 # moz-agent
 
-Firefox extension stub. Goal: an agentic tool that connects to a user's browser
+Firefox extension. Goal: an agentic tool that connects to a user's browser
 session and lets an external agent observe/act on it.
 
 ## Status
 
-Bare stub. Background script and popup log to console only, no real connection yet.
+Domain-gated stub: per-domain enable/write toggles, badge indication, auth
+handoff from a project page, and a dispatch queue in the DB. No job
+execution (content-script dispatch) wired up yet.
 
 ## Structure
 
-- `extension/manifest.json` - MV3 manifest, Firefox gecko id set
-- `extension/background.js` - background script, will hold the connection to the agent server
-- `extension/popup/` - toolbar popup UI
-- `extension/icons/` - not populated yet
+- `extension/manifest.json` - MV3 manifest, background is a native ES module
+- `extension/background.js` - domain state, permission handling, badge,
+  auth, polling
+- `extension/supabase-client.js` - thin `fetch` wrapper over Supabase's
+  REST (PostgREST) and Auth (GoTrue) HTTP APIs. No SDK, no build step.
+- `extension/config.js` - Supabase URL/key and project page origin
+  (placeholders, fill in your own)
+- `extension/auth-bridge.js` - content script that relays a session from
+  the project page (see [Auth](#auth))
+- `extension/test-bridge.js` - content script used only by the test suite
+- `extension/popup/` - toggle UI
 - `supabase/migrations/0001_init.sql` - schema, all objects prefixed `moz_agent_`
+
+## Why no bundler
+
+Earlier versions of this depended on `@supabase/supabase-js`, which pulls in
+GoTrue, PostgREST, and a full Phoenix-channel Realtime client for maybe 5%
+of that surface actually used here - and needed `esbuild` just to make an
+npm package importable from a raw WebExtension background script. That's
+gone. `extension/supabase-client.js` reimplements only what's needed
+(query/insert/update over `fetch`, session refresh over `fetch`) as plain
+ES modules, which Firefox loads natively (`"type": "module"` in the
+manifest's `background` key, `type="module"` on the popup's script tag).
+Load the extension as-is, no build step.
+
+The one thing `fetch` can't do is Supabase Realtime (it's a WebSocket/Phoenix
+protocol, not request/response). Rather than hand-roll that too, domain and
+job state are polled on a `browser.alarms` timer instead of pushed - see
+[Auth](#auth) and the polling note below. Trade-off: changes take up to a
+minute to be noticed instead of arriving instantly. Worth revisiting if job
+dispatch latency ends up mattering; not worth the protocol-reimplementation
+cost yet.
 
 ## DB
 
@@ -22,8 +51,11 @@ Two tables, both RLS-scoped to `auth.uid()`:
 - `moz_agent_enabled_domains` - per-user allow list. `enabled` gates parse/crawl
   (GET only). `allow_write` is a separate opt-in required for `submit` jobs.
 - `moz_agent_jobs` - the dispatch queue. `type` is `parse` / `crawl` / `submit`,
-  `status` walks `pending` -> `claimed` -> `done` / `failed`. Realtime is on for
-  this table so the extension gets pushed new jobs.
+  `status` walks `pending` -> `claimed` -> `done` / `failed`.
+
+`extension/background.js` polls both on a 1-minute `browser.alarms` timer
+(the practical floor for that API) plus immediately after auth changes,
+rather than subscribing to Realtime.
 
 ## Dev
 
@@ -33,11 +65,12 @@ npm run lint
 npm run run
 ```
 
-`npm run run` uses `web-ext run` to load the extension into a temporary Firefox profile.
+`npm run run` uses `web-ext run` to load the extension into a temporary
+Firefox profile directly from `extension/` - nothing to build first.
 
 ## Examples
 
-DB usage examples (supabase-js calls paired with raw SQL equivalents) live
+DB usage examples (`fetch` calls paired with raw SQL equivalents) live
 in [`docs/db-examples.md`](docs/db-examples.md).
 
 ## Auth
@@ -52,7 +85,7 @@ it's explicitly connected.
 Flow:
 
 1. The project page handles real login (magic link / OAuth / password) with
-   its own `supabase-js` client, same as any web app.
+   its own `supabase-js` client (or its own `fetch` calls), same as any web app.
 2. The project page cooperates by dispatching a DOM event from its own
    `onAuthStateChange` listener:
    ```js
@@ -63,22 +96,24 @@ Flow:
    `onAuthStateChange` fires once on load with the current session (or
    `null`), so this covers "already logged in" too, no storage-format
    sniffing required.
-3. `extension/src/auth-bridge.js`, a content script scoped only to
+3. `extension/auth-bridge.js`, a content script scoped only to
    `PROJECT_PAGE_ORIGIN` (a required host permission, distinct from the
    optional per-target-domain grants), relays that event to the background
    script.
-4. Background adopts the session via `supabase.auth.setSession(...)`, or
-   signs out if the event carried `null`. Either way it resets the domain
-   cache, active job counts, and realtime subscriptions before reloading -
-   stale rows from a previous identity must never linger.
+4. Background adopts the session via `setSession(...)` in
+   `supabase-client.js`, or signs out if the event carried `null`. Either
+   way it resets the domain cache, active job counts, and polling before
+   reloading - stale rows from a previous identity must never linger.
 
-Session persistence uses a `browser.storage.local`-backed storage adapter
-rather than the default `localStorage`, since Firefox can tear down and
-respawn MV3 event pages when idle and a plain `localStorage` session
-wouldn't reliably survive that.
+Session persistence uses `browser.storage.local` rather than `localStorage`,
+since Firefox can tear down and respawn MV3 event pages when idle and a
+plain `localStorage` session wouldn't reliably survive that. Token refresh
+is handled in `supabase-client.js`'s `getSession()`, which transparently
+calls GoTrue's `/auth/v1/token?grant_type=refresh_token` when the cached
+session is near expiry.
 
 Before this works you need to fill in `PROJECT_PAGE_ORIGIN` in
-`extension/src/config.js` and the matching `host_permissions` /
+`extension/config.js` and the matching `host_permissions` /
 `content_scripts` entries in `extension/manifest.json` with your real
 project page domain (both currently point at the `app.moz-agent.example`
 placeholder).
@@ -102,12 +137,15 @@ doesn't support loading unpacked WebExtensions, so it's not used here).
 npm run test:e2e
 ```
 
-This builds the extension against an in-memory Supabase stub
-(`extension/src/supabase-stub.js`, swapped in via `esbuild`'s `alias` option
-for deterministic runs with no real project needed), launches headless
-Firefox, installs the extension as a temporary add-on, and drives the
-background script's message handlers through a `localhost`-only test-bridge
-content script (`extension/src/test-bridge.js`) that a test fixture page
+No build step needed, but the Supabase client still gets swapped for tests:
+`tests/prepare-test-extension.js` copies `extension/` into `.test-extension/`
+and overwrites `supabase-client.js` with `tests/fixtures/supabase-client.stub.js`,
+an in-memory fake exposing the same function names. Plain `fs.cpSync`, no
+bundler involved. That gives deterministic test runs with no real Supabase
+project needed. The test then installs `.test-extension/` as a temporary
+add-on in headless Firefox and drives the background script's message
+handlers through a `localhost`-only test-bridge content script
+(`extension/test-bridge.js`) that a test fixture page
 (`tests/fixtures/index.html`) talks to over DOM events.
 
 **What's covered**: message routing, the enable/write gating logic, and that
@@ -125,4 +163,3 @@ Requires a real Firefox install on the machine running the tests. Set
 - pick a transport for the agent connection (websocket vs native messaging)
 - add the agent server (node), with HURL tests against its HTTP/WS endpoints
 - content script for page-level actions
-- auth/session handoff between extension and agent server

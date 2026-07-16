@@ -6,9 +6,9 @@ const path = require('node:path')
 const { Builder } = require('selenium-webdriver')
 const firefox = require('selenium-webdriver/firefox')
 const geckodriver = require('geckodriver')
+const { prepareTestExtension } = require('./prepare-test-extension')
 
 const FIXTURE_PATH = path.resolve(__dirname, 'fixtures/index.html')
-const EXTENSION_PATH = path.resolve(__dirname, '../extension')
 
 const startFixtureServer = () => new Promise(resolve => {
   const server = http.createServer((req, res) => {
@@ -48,7 +48,7 @@ test('moz-agent e2e', async t => {
     server.close()
   })
 
-  await driver.installAddon(EXTENSION_PATH, true)
+  await driver.installAddon(prepareTestExtension(), true)
   await driver.get(`http://127.0.0.1:${port}/`)
 
   await t.test('unknown domain defaults to disabled', async () => {

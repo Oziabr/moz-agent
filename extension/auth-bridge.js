@@ -8,7 +8,7 @@
 //
 // onAuthStateChange fires once on load with the current session (or null),
 // so this also covers the "already logged in" case without reading storage
-// directly and coupling to supabase-js's internal key format.
+// directly and coupling to a specific auth library's internal key format.
 
 const handleSessionEvent = event => {
   const session = event.detail?.session || null
