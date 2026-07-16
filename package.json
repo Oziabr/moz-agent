@@ -10,8 +10,8 @@
     "test:e2e": "node --test tests/e2e.test.js"
   },
   "devDependencies": {
-    "geckodriver": "^4.4.3",
-    "selenium-webdriver": "^4.23.0",
-    "web-ext": "^8.3.0"
+    "geckodriver": "^6.1.0",
+    "selenium-webdriver": "^4.46.0",
+    "web-ext": "^10.5.0"
   }
 }
