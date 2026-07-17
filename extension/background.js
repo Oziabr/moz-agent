@@ -94,8 +94,66 @@ const refreshJobCounts = async () => {
 
 const pollNow = async () => {
   await loadDomainState()
-  await refreshJobCounts()
+  await dispatchPendingJobs()
   await refreshActiveTabBadge()
+}
+
+// claims a job (pending -> claimed, filtered on status=pending so a
+// concurrent claim from another tab/window loses the race cleanly) and
+// reports whether *this* call actually won it.
+const claimJob = async jobId => {
+  const { data, error } = await updateRows(
+    TABLE_JOBS,
+    { status: 'claimed', claimed_at: new Date().toISOString() },
+    { id: eq(jobId), status: eq('pending') },
+    { returning: true }
+  )
+  if (error) {
+    console.error('moz-agent: failed to claim job', jobId, error)
+    return false
+  }
+  return Boolean(data && data.length > 0)
+}
+
+const resolveJob = (jobId, patch) =>
+  updateRows(TABLE_JOBS, { ...patch, completed_at: new Date().toISOString() }, { id: eq(jobId) })
+
+const dispatchJobsForDomain = async (domain, tabId) => {
+  const { data: pending, error } = await selectRows(TABLE_JOBS, {
+    filters: { domain: eq(domain), status: eq('pending') }
+  })
+  if (error) {
+    console.error('moz-agent: failed to load pending jobs', domain, error)
+    return
+  }
+
+  for (const job of pending) {
+    if (!(await claimJob(job.id))) continue // lost the race to another tab/instance
+
+    try {
+      const response = await browser.tabs.sendMessage(tabId, { type: 'runJob', payload: job.payload })
+      await resolveJob(job.id, { status: 'done', result: response?.results ?? null })
+    } catch (err) {
+      // most commonly: no content script on this page (e.g. about:, a
+      // browser-internal page, or one that hasn't finished loading yet)
+      await resolveJob(job.id, { status: 'failed', error: String(err.message || err) })
+    }
+  }
+}
+
+const dispatchPendingJobs = async () => {
+  if (!isAuthenticated) return
+
+  const tabs = await browser.tabs.query({})
+  for (const tab of tabs) {
+    const domain = getHostname(tab.url)
+    if (!domain) continue
+    const state = domainCache.get(domain)
+    if (!state || !state.enabled) continue
+    await dispatchJobsForDomain(domain, tab.id)
+  }
+
+  await refreshJobCounts()
 }
 
 const startPolling = () => browser.alarms.create(POLL_ALARM_NAME, { periodInMinutes: POLL_INTERVAL_MINUTES })

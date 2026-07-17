@@ -29,6 +29,11 @@
       "matches": ["http://localhost/*"],
       "js": ["auth-bridge.js"],
       "run_at": "document_start"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
     }
   ],
   "action": {

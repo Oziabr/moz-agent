@@ -97,13 +97,13 @@ export const upsertRow = async (table, row, { onConflict } = {}) => {
   return { error: null }
 }
 
-export const updateRows = async (table, patch, filters) => {
+export const updateRows = async (table, patch, filters, { returning = false } = {}) => {
   const query = Object.entries(filters).map(([col, condition]) => `${col}=${condition}`).join('&')
   const response = await fetch(`${REST_URL}/${table}?${query}`, {
     method: 'PATCH',
-    headers: await restHeaders({ Prefer: 'return=minimal' }),
+    headers: await restHeaders({ Prefer: returning ? 'return=representation' : 'return=minimal' }),
     body: JSON.stringify(patch)
   })
-  if (!response.ok) return { error: await response.text() }
-  return { error: null }
+  if (!response.ok) return { data: null, error: await response.text() }
+  return { data: returning ? await response.json() : null, error: null }
 }
