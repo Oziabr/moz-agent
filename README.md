@@ -12,8 +12,7 @@ execution (content-script dispatch) wired up yet.
 ## Structure
 
 - `extension/manifest.json` - MV3 manifest, background is a native ES module
-- `extension/background.js` - domain state, permission handling, badge,
-  auth, polling
+- `extension/background.js` - domain state, badge, polling, auth
 - `extension/supabase-client.js` - thin `fetch` wrapper over Supabase's
   REST (PostgREST) and Auth (GoTrue) HTTP APIs. No SDK, no build step.
 - `extension/config.example.js` - template for Supabase URL/key and project
@@ -108,7 +107,43 @@ automatically once the page has it (see [Auth](#auth)).
 DB usage examples (`fetch` calls paired with raw SQL equivalents) live
 in [`docs/db-examples.md`](docs/db-examples.md).
 
-## Auth
+## Permissions
+
+`extension/manifest.json` declares `host_permissions: ["*://*/*"]` -
+granted at install, like an ad blocker such as uBlock Origin, rather than
+requested per-domain at toggle time. Earlier versions requested
+`*://${domain}/*` as an *optional* permission the moment a domain was
+enabled via `browser.permissions.request()`. That broke in practice:
+`permissions.request()` must be called synchronously from within a user
+input handler, and the actual call happened in `background.js` after a
+message round-trip from the popup's click handler - crossing that message
+boundary loses the "user gesture" context Firefox requires, so every
+request failed with `permissions.request may only be called from a user
+input handler`, even though a real click triggered it.
+
+Rather than restructure the popup to call `permissions.request()` directly
+in its own click handler (still one native permission prompt per new
+domain, and still nothing Selenium can drive - see [Dev](#dev)), enabling a
+domain is now a pure DB write (`moz_agent_enabled_domains.enabled`); the
+browser-level access is already there for every site from install. The
+`enabled`/`allow_write` columns and their RLS/trigger enforcement (see
+[Auth](#auth) and `supabase/migrations/0001_init.sql`) are unchanged and
+remain the real gate on what the agent can do - this only removes the
+second, browser-permission-shaped gate that sat in front of them and that
+Firefox's own user-gesture rule made unreliable to drive from a
+message-passed background script.
+
+Trade-off worth being explicit about: the extension now has standing read
+access to every page a user visits from the moment it's installed, same as
+any all-urls extension. If per-domain browser-level isolation matters more
+than fixing the click-to-permission flow, the alternative is moving
+`permissions.request()` into `popup.js` itself (called directly in the
+toggle's `click` handler, no `sendMessage` hop) and keeping
+`optional_host_permissions` - a contained change, not a schema change,
+symmetric with the note on [Auth](#auth) about swapping the session-handoff
+design later.
+
+
 
 The extension and the project page (your web dashboard) need to resolve to
 the same Supabase user, since RLS scopes every row in
@@ -196,12 +231,13 @@ handlers through a `localhost`-only test-bridge content script
 (`extension/test-bridge.js`) that a test fixture page
 (`tests/fixtures/index.html`) talks to over DOM events.
 
-**What's covered**: message routing, the enable/write gating logic, and that
-a failed permission request never reaches the DB. **What isn't**: actually
-granting a new optional permission. `browser.permissions.request()` requires
-a real user gesture and shows a native prompt Selenium can't drive (by
-design, this is a security boundary Firefox enforces) — so that path is a
-manual smoke test via `npm run run`, not part of the automated suite.
+**What's covered**: message routing and the enable/write gating logic
+end-to-end, including that `setWrite` is rejected on a domain that isn't
+enabled. Since the extension now holds `*://*/*` at install time (see
+[Permissions](#permissions) below), enabling a domain is a pure DB write
+with no native permission prompt in the way, so this suite can exercise the
+whole enable → write flow headlessly - there's no longer a manual-only step
+here.
 
 Requires a real Firefox install on the machine running the tests. Set
 `FIREFOX_BIN` to point at a specific binary if it's not on `PATH`.

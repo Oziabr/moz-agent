@@ -57,17 +57,24 @@ test('moz-agent e2e', async t => {
     assert.equal(Boolean(state.enabled), false)
   })
 
-  await t.test('enabling without a user gesture is rejected, DB untouched', async () => {
+  await t.test('enabling a domain succeeds without a user gesture (pure DB write)', async () => {
     const result = await callBridge(driver, 'setEnabled', { domain: 'example.com', enabled: true })
-    assert.equal(result.ok, false)
-    assert.equal(result.reason, 'permission request denied')
+    assert.equal(result.ok, true)
 
     const state = await callBridge(driver, 'getState', { domain: 'example.com' })
-    assert.equal(Boolean(state.enabled), false)
+    assert.equal(Boolean(state.enabled), true)
+  })
+
+  await t.test('allow-write succeeds once the domain is enabled', async () => {
+    const result = await callBridge(driver, 'setWrite', { domain: 'example.com', allowWrite: true })
+    assert.equal(result.ok, true)
+
+    const state = await callBridge(driver, 'getState', { domain: 'example.com' })
+    assert.equal(Boolean(state.allowWrite), true)
   })
 
   await t.test('allow-write is blocked on a domain that is not enabled', async () => {
-    const result = await callBridge(driver, 'setWrite', { domain: 'example.com', allowWrite: true })
+    const result = await callBridge(driver, 'setWrite', { domain: 'other.example', allowWrite: true })
     assert.equal(result.ok, false)
     assert.equal(result.reason, 'domain is not enabled')
   })

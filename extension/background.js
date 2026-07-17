@@ -16,7 +16,6 @@ const BADGE_COLOR_OFF = '#888780'
 const BADGE_COLOR_READ = '#4A90D9'
 const BADGE_COLOR_WRITE = '#D9822B'
 const BADGE_COLOR_JOBS = '#3FB68B'
-const BADGE_COLOR_MISMATCH = '#E2504A'
 
 const POLL_ALARM_NAME = 'moz-agent-poll'
 const POLL_INTERVAL_MINUTES = 1
@@ -33,19 +32,9 @@ const getHostname = url => {
   }
 }
 
-const hasHostPermission = domain =>
-  browser.permissions.contains({ origins: [`*://${domain}/*`] })
-
-const requestHostPermission = domain =>
-  browser.permissions.request({ origins: [`*://${domain}/*`] })
-
-const removeHostPermission = domain =>
-  browser.permissions.remove({ origins: [`*://${domain}/*`] })
-
 const badgeForState = (state, jobCount) => {
   if (jobCount > 0) return { text: String(jobCount), color: BADGE_COLOR_JOBS }
   if (!state || !state.enabled) return { text: '', color: BADGE_COLOR_OFF }
-  if (state.grantMismatch) return { text: '!', color: BADGE_COLOR_MISMATCH }
   if (state.allowWrite) return { text: 'W', color: BADGE_COLOR_WRITE }
   return { text: 'R', color: BADGE_COLOR_READ }
 }
@@ -79,16 +68,6 @@ const loadDomainState = async () => {
 
   domainCache.clear()
   data.forEach(row => domainCache.set(row.domain, { enabled: row.enabled, allowWrite: row.allow_write }))
-
-  const grantChecks = await Promise.all(
-    data.map(row => hasHostPermission(row.domain).then(granted => ({ domain: row.domain, granted })))
-  )
-  grantChecks
-    .filter(check => !check.granted)
-    .forEach(check => {
-      const state = domainCache.get(check.domain)
-      if (state) state.grantMismatch = true
-    })
 }
 
 const refreshJobCounts = async () => {
@@ -125,13 +104,6 @@ const stopPolling = () => browser.alarms.clear(POLL_ALARM_NAME)
 
 const setDomainEnabled = async (domain, enabled) => {
   if (!isAuthenticated) return { ok: false, reason: 'not authenticated' }
-
-  if (enabled) {
-    const granted = await requestHostPermission(domain)
-    if (!granted) return { ok: false, reason: 'permission request denied' }
-  } else {
-    await removeHostPermission(domain)
-  }
 
   const currentWrite = domainCache.get(domain)?.allowWrite || false
   const { error } = await upsertRow(
