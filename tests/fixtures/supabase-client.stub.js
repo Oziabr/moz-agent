@@ -49,9 +49,8 @@ export const upsertRow = async (table, row) => {
   return { error: null }
 }
 
-export const updateRows = async (table, patch, filters) => {
-  store[table]
-    .filter(row => matches(row, filters))
-    .forEach(row => Object.assign(row, patch))
-  return { error: null }
+export const updateRows = async (table, patch, filters, { returning = false } = {}) => {
+  const matched = store[table].filter(row => matches(row, filters))
+  matched.forEach(row => Object.assign(row, patch))
+  return { data: returning ? matched : null, error: null }
 }
