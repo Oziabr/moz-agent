@@ -6,7 +6,7 @@
   "scripts": {
     "lint": "web-ext lint --source-dir=extension",
     "build": "web-ext build --source-dir=extension --artifacts-dir=dist",
-    "run": "web-ext run --source-dir=extension",
+    "run": "node scripts/dev.js",
     "test:e2e": "node --test tests/e2e.test.js"
   },
   "devDependencies": {

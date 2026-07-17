@@ -2,5 +2,6 @@ node_modules
 dist
 .test-extension
 extension/config.js
+project-page/public/config.js
 *.log
 .web-extension-id

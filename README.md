@@ -23,6 +23,9 @@ execution (content-script dispatch) wired up yet.
   the project page (see [Auth](#auth))
 - `extension/test-bridge.js` - content script used only by the test suite
 - `extension/popup/` - toggle UI
+- `project-page/` - the login + domain list page from [Auth](#auth), served
+  locally by `npm run run` (see [Dev](#dev))
+- `scripts/dev.js` - starts `project-page/` and `web-ext run` together
 - `supabase/migrations/0001_init.sql` - schema, all objects prefixed `moz_agent_`
 
 ## Why no bundler
@@ -63,33 +66,43 @@ rather than subscribing to Realtime.
 ```
 npm install
 cp extension/config.example.js extension/config.js
+cp project-page/public/config.example.js project-page/public/config.js
 ```
 
-Then fill in `extension/config.js` with your real values:
+Fill in both `config.js` files with the same `SUPABASE_URL` /
+`SUPABASE_ANON_KEY` - Supabase dashboard -> your project ->
+**Project Settings -> API** -> "Project URL" and "anon public" key. The anon
+key is meant to be exposed client-side (RLS is the actual security boundary,
+not key secrecy) - safe to ship inside either the extension or the page -
+but both files are gitignored so your specific project isn't published in
+this repo's history.
 
-- `SUPABASE_URL` / `SUPABASE_ANON_KEY` - Supabase dashboard -> your project ->
-  **Project Settings -> API** -> "Project URL" and "anon public" key. The
-  anon key is meant to be exposed client-side (RLS is the actual security
-  boundary, not key secrecy) - safe to ship inside the extension - but
-  `config.js` is still gitignored so your specific project isn't published
-  in this repo's history.
-- `PROJECT_PAGE_ORIGIN` - see [Auth](#auth) below; must also match the
-  `host_permissions` / `content_scripts` entry in `extension/manifest.json`.
+`extension/config.js`'s `PROJECT_PAGE_ORIGIN` defaults to
+`http://localhost:4590`, matching `scripts/dev.js`'s default port - leave it
+as-is for local dev. Before deploying for real, see the note at the bottom
+of [Auth](#auth).
 
-`extension/config.js` is required at runtime - `supabase-client.js` and
-`popup.js` import it directly, no build step substitutes it in. If it's
-missing, the background script fails to load entirely once it actually
-imports `supabase-client.js`. The e2e test suite doesn't need it (it swaps
-`supabase-client.js` for an in-memory stub that never touches Supabase), but
-`npm run run` / `npm run build` do.
+One more one-time step: in the Supabase dashboard under
+**Authentication -> URL Configuration**, add `http://localhost:4590` to the
+allowed redirect URLs. Supabase only redirects magic links to URLs on that
+list - the login on `project-page/` will silently fail to complete
+otherwise.
+
+`extension/config.js` and `project-page/public/config.js` are required at
+runtime - nothing substitutes them in at build time. The e2e test suite
+doesn't need either (it swaps `extension/supabase-client.js` for an
+in-memory stub that never touches Supabase), but `npm run run` does.
 
 ```
 npm run lint
 npm run run
 ```
 
-`npm run run` uses `web-ext run` to load the extension into a temporary
-Firefox profile directly from `extension/` - nothing to build first.
+`npm run run` runs `scripts/dev.js`, which starts `project-page/` on
+`http://localhost:4590` and `web-ext run` together, and stops both on
+Ctrl-C. Open `http://localhost:4590` to log in (magic link) and see your
+enabled domains; the extension picks up the session automatically once the
+page has it (see [Auth](#auth)).
 
 ## Examples
 
@@ -107,18 +120,14 @@ it's explicitly connected.
 
 Flow:
 
-1. The project page handles real login (magic link / OAuth / password) with
-   its own `supabase-js` client (or its own `fetch` calls), same as any web app.
-2. The project page cooperates by dispatching a DOM event from its own
-   `onAuthStateChange` listener:
+1. `project-page/public/` handles real login - magic link via GoTrue's
+   `/auth/v1/otp` REST endpoint directly (`fetch`, no SDK, same approach as
+   the extension). See `project-page/public/app.js`.
+2. On login (and on load, if a session is already stored) it dispatches:
    ```js
-   supabase.auth.onAuthStateChange((event, session) => {
-     window.dispatchEvent(new CustomEvent('moz-agent-session', { detail: { session } }))
-   })
+   window.dispatchEvent(new CustomEvent('moz-agent-session', { detail: { session } }))
    ```
-   `onAuthStateChange` fires once on load with the current session (or
-   `null`), so this covers "already logged in" too, no storage-format
-   sniffing required.
+   and the same on logout with `session: null`.
 3. `extension/auth-bridge.js`, a content script scoped only to
    `PROJECT_PAGE_ORIGIN` (a required host permission, distinct from the
    optional per-target-domain grants), relays that event to the background
@@ -133,13 +142,17 @@ since Firefox can tear down and respawn MV3 event pages when idle and a
 plain `localStorage` session wouldn't reliably survive that. Token refresh
 is handled in `supabase-client.js`'s `getSession()`, which transparently
 calls GoTrue's `/auth/v1/token?grant_type=refresh_token` when the cached
-session is near expiry.
+session is near expiry. `project-page/public/app.js` doesn't refresh its own
+copy yet - it's a stub login page, not a full session-management client;
+worth adding if the page ends up living longer than a few clicks per visit.
 
-Before this works you need to fill in `PROJECT_PAGE_ORIGIN` in
-`extension/config.js` and the matching `host_permissions` /
-`content_scripts` entries in `extension/manifest.json` with your real
-project page domain (both currently point at the `app.moz-agent.example`
-placeholder).
+`PROJECT_PAGE_ORIGIN` and the manifest's matching `host_permissions` /
+`content_scripts` entry for `auth-bridge.js` both default to
+`http://localhost` for local dev (see [Dev](#dev)). Before deploying the
+project page for real, update all three - `extension/config.js`'s
+`PROJECT_PAGE_ORIGIN`, and both the `host_permissions` entry and the
+`auth-bridge.js` match pattern in `extension/manifest.json` - to your real
+HTTPS domain, and add that domain to Supabase's redirect URL allow-list too.
 
 Passing the session through a content script rather than exchanging a
 short-lived code is the simpler of two reasonable designs - it's safe
