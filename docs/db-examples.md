@@ -175,7 +175,46 @@ to `auth.uid()`, and the domain-permission trigger checks `new.user_id`
 against that same user's `moz_agent_enabled_domains` row) - the anon key
 alone isn't enough to get past `moz_agent_jobs_owner_insert`.
 
+## Schedule a parse job using $ / $$ extractors
 
+`$` grabs a single element and requires a `name` (it's one value, so it
+needs a key to come back under); `$$` grabs every matching element and
+returns them as a plain array - there's nothing to name per-item. Both
+default to trimmed `textContent`, or a given attribute's value via `attr`.
+
+```js
+const scheduleParseJob = domain =>
+  upsertRow('moz_agent_jobs', {
+    domain,
+    type: 'parse',
+    payload: {
+      commands: [
+        { type: '$', selector: 'h1', name: 'title' },
+        { type: '$', selector: 'meta[name="description"]', name: 'description', attr: 'content' },
+        { type: '$$', selector: 'article a', attr: 'href' }
+      ]
+    }
+  })
+```
+
+```sql
+insert into moz_agent_jobs (user_id, domain, type, payload)
+values (
+  '<user-uuid>',
+  'example.com',
+  'parse',
+  '{"commands": [
+    {"type": "$", "selector": "h1", "name": "title"},
+    {"type": "$", "selector": "meta[name=\"description\"]", "name": "description", "attr": "content"},
+    {"type": "$$", "selector": "article a", "attr": "href"}
+  ]}'::jsonb
+);
+```
+
+The job's `result` column ends up as the array of per-command outcomes, in
+order - e.g. `[{"ok":true,"name":"title","value":"..."}, {"ok":true,"name":"description","value":"..."}, {"ok":true,"count":12,"values":["...", ...]}]`.
+
+## Insert a job manually for testing
 
 Only works if the domain is enabled, and `allow_write`'d for a `submit`
 job - the `moz_agent_jobs_check_domain_permission` trigger rejects it

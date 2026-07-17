@@ -7,9 +7,11 @@ session and lets an external agent observe/act on it.
 
 Domain-gated stub: per-domain enable/write toggles, badge indication, auth
 handoff from a project page, and a dispatch queue in the DB. Job execution
-is wired for a first command type (`msg`, an on-page popup) - see
-`extension/content.js` and `dispatchPendingJobs` in `background.js`. Other
-command types (parse/crawl/submit-shaped actions) aren't implemented yet.
+is wired for three command types (`msg` - an on-page popup; `$` - a single
+named element extraction; `$$` - all matching elements) - see
+`extension/content.js` and `dispatchPendingJobs` in `background.js`. Other,
+more consequential command types (form-submission-shaped actions) aren't
+implemented yet.
 
 ## Structure
 
@@ -23,9 +25,9 @@ command types (parse/crawl/submit-shaped actions) aren't implemented yet.
 - `extension/auth-bridge.js` - content script that relays a session from
   the project page (see [Auth](#auth))
 - `extension/content.js` - content script that executes a job's
-  `payload.commands` on the page (currently just `{ type: 'msg', text }`,
-  which shows a small on-page popup); dispatched to by `background.js`'s
-  `dispatchPendingJobs` on each poll tick
+  `payload.commands` on the page: `msg` (on-page popup), `$` (single
+  element, named), `$$` (all matching elements); dispatched to by
+  `background.js`'s `dispatchPendingJobs` on each poll tick
 - `extension/test-bridge.js` - content script used only by the test suite
 - `extension/popup/` - toggle UI
 - `project-page/` - the login + domain list page from [Auth](#auth), served
@@ -251,6 +253,7 @@ Requires a real Firefox install on the machine running the tests. Set
 
 - pick a transport for the agent connection (websocket vs native messaging)
 - add the agent server (node), with HURL tests against its HTTP/WS endpoints
-- more command types in `content.js` beyond `msg` (parse/crawl/submit-shaped
-  page actions), and e2e coverage for the dispatch path itself (claim race,
-  a tab with no content script yet, `allow_write` revoked mid-job)
+- more command types in `content.js` beyond `msg`/`$`/`$$` (form-submission
+  -shaped page actions), and e2e coverage for the dispatch path itself
+  (claim race, a tab with no content script yet, `allow_write` revoked
+  mid-job)
