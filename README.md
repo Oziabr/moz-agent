@@ -165,9 +165,8 @@ Flow:
    ```
    and the same on logout with `session: null`.
 3. `extension/auth-bridge.js`, a content script scoped only to
-   `PROJECT_PAGE_ORIGIN` (a required host permission, distinct from the
-   optional per-target-domain grants), relays that event to the background
-   script. It injects at `document_start`, not the default `document_idle` -
+   `PROJECT_PAGE_ORIGIN`, relays that event to the background script. It
+   injects at `document_start`, not the default `document_idle` -
    `app.js` is a `type="module"` script, which executes deferred at roughly
    the same phase `document_idle` would inject at, with no guaranteed
    ordering between the two. `document_start` guarantees the listener is
