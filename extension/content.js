@@ -1,17 +1,19 @@
 // runs on every page (see manifest content_scripts, matching the *://*/*
-// host_permissions grant). executes a job's payload.commands array,
-// one command at a time:
+// host_permissions grant). executes a job's payload.commands array in
+// order, one command at a time:
 //   { type: 'msg', text }                     - shows an on-page popup
 //   { type: '$',  selector, name, attr? }      - single element, named
 //   { type: '$$', selector, attr? }            - all matching elements
+//   { type: 'wait', ms }                       - pause before the next command
 // 'attr' is optional on both extractors - textContent (trimmed) is used
 // by default, or the given attribute's value when present.
-// unrecognized command types (and extractors missing a required field)
+// unrecognized command types (and commands missing a required field)
 // are reported back as failed rather than silently skipped, so the
 // dispatcher (background.js) can surface that in the job's result.
 
 const POPUP_ID = 'moz-agent-popup'
 const POPUP_DISMISS_MS = 8000
+const MAX_WAIT_MS = 30000 // caps a single 'wait' so one bad job can't hang the tab's whole queue
 
 const showPopup = text => {
   let el = document.getElementById(POPUP_ID)
@@ -48,7 +50,7 @@ const extractValue = (el, attr) => {
   return attr ? el.getAttribute(attr) : el.textContent.trim()
 }
 
-const runCommand = command => {
+const runCommand = async command => {
   if (command.type === 'msg') {
     showPopup(String(command.text ?? ''))
     return { ok: true }
@@ -68,13 +70,30 @@ const runCommand = command => {
     return { ok: true, count: values.length, values }
   }
 
+  if (command.type === 'wait') {
+    const ms = Number(command.ms)
+    if (!Number.isFinite(ms) || ms < 0) return { ok: false, reason: "'wait' command requires a non-negative 'ms'" }
+    const waited = Math.min(ms, MAX_WAIT_MS)
+    await new Promise(resolve => setTimeout(resolve, waited))
+    return { ok: true, waited }
+  }
+
   return { ok: false, reason: `unknown command type: ${command.type}` }
 }
 
-const runCommands = commands => (Array.isArray(commands) ? commands : []).map(runCommand)
+// sequential, not Promise.all - a 'wait' is only useful if it actually
+// delays whatever comes after it in the same job.
+const runCommands = async commands => {
+  const list = Array.isArray(commands) ? commands : []
+  const results = []
+  for (const command of list) {
+    results.push(await runCommand(command))
+  }
+  return results
+}
 
 browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type !== 'runJob') return false
-  sendResponse({ ok: true, results: runCommands(message.payload?.commands) })
-  return false
+  runCommands(message.payload?.commands).then(results => sendResponse({ ok: true, results }))
+  return true // keep the message channel open for the async sendResponse above
 })

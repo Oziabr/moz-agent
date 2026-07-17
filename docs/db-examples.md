@@ -175,12 +175,14 @@ to `auth.uid()`, and the domain-permission trigger checks `new.user_id`
 against that same user's `moz_agent_enabled_domains` row) - the anon key
 alone isn't enough to get past `moz_agent_jobs_owner_insert`.
 
-## Schedule a parse job using $ / $$ extractors
+## Schedule a parse job using $ / $$ extractors and wait
 
 `$` grabs a single element and requires a `name` (it's one value, so it
 needs a key to come back under); `$$` grabs every matching element and
 returns them as a plain array - there's nothing to name per-item. Both
 default to trimmed `textContent`, or a given attribute's value via `attr`.
+A `wait` command (`{ type: 'wait', ms }`, capped at 30s) can sit between
+extractors to pause for content that loads in after the page settles.
 
 ```js
 const scheduleParseJob = domain =>
@@ -191,6 +193,7 @@ const scheduleParseJob = domain =>
       commands: [
         { type: '$', selector: 'h1', name: 'title' },
         { type: '$', selector: 'meta[name="description"]', name: 'description', attr: 'content' },
+        { type: 'wait', ms: 1500 },
         { type: '$$', selector: 'article a', attr: 'href' }
       ]
     }
@@ -206,6 +209,7 @@ values (
   '{"commands": [
     {"type": "$", "selector": "h1", "name": "title"},
     {"type": "$", "selector": "meta[name=\"description\"]", "name": "description", "attr": "content"},
+    {"type": "wait", "ms": 1500},
     {"type": "$$", "selector": "article a", "attr": "href"}
   ]}'::jsonb
 );
