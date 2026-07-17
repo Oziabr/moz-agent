@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <title>moz-agent</title>
     <style>
-      body { font-family: system-ui, sans-serif; max-width: 480px; margin: 48px auto; padding: 0 16px; }
+      body { font-family: system-ui, sans-serif; max-width: 720px; margin: 48px auto; padding: 0 16px; }
       h1 { font-size: 18px; }
       input { padding: 6px; width: 100%; box-sizing: border-box; margin-bottom: 8px; }
       button { padding: 6px 12px; cursor: pointer; }
@@ -12,6 +12,13 @@
       th, td { text-align: left; padding: 6px 4px; border-bottom: 1px solid #eee; font-size: 13px; }
       #login-status { font-size: 12px; color: #666; min-height: 16px; }
       #whoami { font-size: 12px; color: #666; }
+      .jobs-row td { padding: 0 0 12px 24px; border-bottom: 1px solid #eee; }
+      .jobs-table { margin: 4px 0 0 0; }
+      .jobs-table th, .jobs-table td { font-size: 12px; padding: 4px; border-bottom: 1px solid #f2f2f2; }
+      .jobs-empty { font-size: 12px; color: #999; padding: 4px 0; }
+      .job-status-pending, .job-status-claimed { color: #b8860b; }
+      .job-status-done { color: #2a8f4f; }
+      .job-status-failed { color: #c0392b; }
     </style>
   </head>
   <body>

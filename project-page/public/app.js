@@ -77,16 +77,80 @@ const fetchDomains = async session => {
   return response.json()
 }
 
-const renderDomains = domains => {
+const fetchJobs = async session => {
+  const columns = 'id,domain,type,status,created_at,error,result'
+  const response = await fetch(`${REST_URL}/moz_agent_jobs?select=${columns}&order=created_at.desc`, {
+    headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${session.access_token}` }
+  })
+  if (!response.ok) throw new Error(await response.text())
+  return response.json()
+}
+
+const HTML_ESCAPES = [[/&/g, '&amp;'], [/</g, '&lt;'], [/>/g, '&gt;'], [/"/g, '&quot;']]
+
+// job result/error text can contain arbitrary content scraped from
+// whatever page the job ran against - unlike domain names (typed through
+// the extension popup), that's not something this page controls, so it
+// gets escaped before going into innerHTML.
+const escapeHtml = text => HTML_ESCAPES.reduce((acc, [pattern, replacement]) => acc.replace(pattern, replacement), String(text))
+
+const truncate = (text, max) => (text.length > max ? `${text.slice(0, max)}...` : text)
+
+const formatTimestamp = iso => new Date(iso).toLocaleString()
+
+const groupJobsByDomain = jobs => {
+  const map = new Map()
+  jobs.forEach(job => {
+    const list = map.get(job.domain) || []
+    list.push(job)
+    map.set(job.domain, list)
+  })
+  return map
+}
+
+// done -> a truncated preview of the result, failed -> the error message,
+// pending/claimed -> nothing yet to show
+const jobSummary = job => {
+  if (job.status === 'failed') return job.error || ''
+  if (job.status === 'done') return job.result ? JSON.stringify(job.result) : ''
+  return ''
+}
+
+const renderJobsTable = jobs => {
+  if (jobs.length === 0) return '<div class="jobs-empty">no jobs yet</div>'
+
+  const rows = jobs.map(job => `
+    <tr>
+      <td>${escapeHtml(job.type)}</td>
+      <td class="job-status-${escapeHtml(job.status)}">${escapeHtml(job.status)}</td>
+      <td>${escapeHtml(formatTimestamp(job.created_at))}</td>
+      <td>${escapeHtml(truncate(jobSummary(job), 120))}</td>
+    </tr>
+  `).join('')
+
+  return `
+    <table class="jobs-table">
+      <thead><tr><th>Type</th><th>Status</th><th>Created</th><th>Result / error</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `
+}
+
+const renderDomains = (domains, jobsByDomain) => {
   els.domainsBody.innerHTML = ''
   domains.forEach(row => {
-    const tr = document.createElement('tr')
-    tr.innerHTML = `
-      <td>${row.domain}</td>
+    const domainRow = document.createElement('tr')
+    domainRow.innerHTML = `
+      <td>${escapeHtml(row.domain)}</td>
       <td>${row.enabled ? 'yes' : 'no'}</td>
       <td>${row.allow_write ? 'yes' : 'no'}</td>
     `
-    els.domainsBody.appendChild(tr)
+    els.domainsBody.appendChild(domainRow)
+
+    const jobsRow = document.createElement('tr')
+    jobsRow.className = 'jobs-row'
+    jobsRow.innerHTML = `<td colspan="3">${renderJobsTable(jobsByDomain.get(row.domain) || [])}</td>`
+    els.domainsBody.appendChild(jobsRow)
   })
   if (domains.length === 0) {
     const tr = document.createElement('tr')
@@ -100,7 +164,8 @@ const showLoggedIn = async session => {
   els.domainsSection.hidden = false
   els.whoami.textContent = 'connected'
   try {
-    renderDomains(await fetchDomains(session))
+    const [domains, jobs] = await Promise.all([fetchDomains(session), fetchJobs(session)])
+    renderDomains(domains, groupJobsByDomain(jobs))
   } catch (err) {
     els.whoami.textContent = `connected, but failed to load domains: ${err.message}`
   }

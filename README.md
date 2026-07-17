@@ -38,7 +38,8 @@ implemented yet.
   [docs/db-examples.md](docs/db-examples.md) for how both work.
 - `extension/test-bridge.js` - content script used only by the test suite
 - `extension/popup/` - toggle UI
-- `project-page/` - the login + domain list page from [Auth](#auth), served
+- `project-page/` - the login + domain/job list page from [Auth](#auth),
+  served
   locally by `npm run run` (see [Dev](#dev))
 - `scripts/dev.js` - starts `project-page/` and `web-ext run` together
 - `supabase/migrations/0001_init.sql` - schema, all objects prefixed `moz_agent_`
@@ -116,7 +117,8 @@ npm run run
 `http://localhost:4590` and `web-ext run` together, and stops both on
 Ctrl-C. Open `http://localhost:4590` to sign up / log in (email + password)
 and see your enabled domains; the extension picks up the session
-automatically once the page has it (see [Auth](#auth)).
+automatically once the page has it (see [Auth](#auth)). Each domain lists its recent jobs
+underneath - type, status, and a truncated result/error preview.
 
 ## Examples
 
