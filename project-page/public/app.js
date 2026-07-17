@@ -118,6 +118,12 @@ const handleLogout = async () => {
 }
 
 const init = async () => {
+  if (!SUPABASE_URL) {
+    els.loginStatus.textContent =
+      'config.js is missing - run: cp project-page/public/config.example.js project-page/public/config.js'
+    return
+  }
+
   const redirectSession = sessionFromRedirectHash()
   if (redirectSession) {
     writeStoredSession(redirectSession)

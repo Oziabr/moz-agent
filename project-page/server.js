@@ -18,11 +18,23 @@ const resolveFilePath = urlPath => {
   return filePath
 }
 
+const MISSING_CONFIG_STUB = `console.error('[moz-agent] project-page/public/config.js is missing. Run: cp project-page/public/config.example.js project-page/public/config.js and fill in your Supabase project values.')
+export const SUPABASE_URL = ''
+export const SUPABASE_ANON_KEY = ''
+`
+
 const handleRequest = (req, res) => {
   const urlPath = new URL(req.url, 'http://localhost').pathname
   const filePath = resolveFilePath(urlPath)
+  const missing = !filePath || !fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()
 
-  if (!filePath || !fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+  if (missing && urlPath === '/config.js') {
+    res.writeHead(200, { 'Content-Type': 'text/javascript' })
+    res.end(MISSING_CONFIG_STUB)
+    return
+  }
+
+  if (missing) {
     res.writeHead(404)
     res.end('not found')
     return
