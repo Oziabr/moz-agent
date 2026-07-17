@@ -267,7 +267,62 @@ bypass that domain's own `allow_write` gate, and needs to be closed before
 such a command is added (e.g. re-checking the *current* tab's domain
 before running a write command, not just the job's origin domain).
 
+## Schedule a screenshot of a region, with its element inventory
 
+`{ type: 'screenshot', selector, itemSelector? }` returns a cropped PNG of
+just that element's area (as a data URL) plus a shallow list of the
+elements inside it - tag, id, class, trimmed text, and a rect positioned
+relative to the region's own top-left corner rather than the viewport, so
+it lines up directly with pixel coordinates in the cropped image. Capturing
+pixels is a privileged API only `background.js` can call, so it's not
+something `content.js` runs on its own the way `msg`/`$`/`$$`/`wait` are -
+see `runScreenshotCommand` and `content.js`'s `measureRegion`.
+
+```js
+const scheduleScreenshotJob = domain =>
+  upsertRow('moz_agent_jobs', {
+    domain,
+    type: 'parse',
+    payload: {
+      commands: [
+        { type: 'screenshot', selector: '#pricing-table', itemSelector: 'tr' }
+      ]
+    }
+  })
+```
+
+```sql
+insert into moz_agent_jobs (user_id, domain, type, payload)
+values (
+  '<user-uuid>',
+  'example.com',
+  'parse',
+  '{"commands": [
+    {"type": "screenshot", "selector": "#pricing-table", "itemSelector": "tr"}
+  ]}'::jsonb
+);
+```
+
+Result shape: `{"ok":true,"image":"data:image/png;base64,...","rect":{"x":0,"y":0,"width":480,"height":320},"elements":[{"tag":"tr","id":null,"className":"row","text":"...","rect":{"x":0,"y":0,"width":480,"height":40}}, ...]}`.
+
+Two things worth knowing before relying on this:
+
+- **Only the visible tab in its window can actually be captured** -
+  `tabs.captureVisibleTab` only ever captures whichever tab is currently
+  active in its window. `captureTabScreenshot` in `background.js` works
+  around this by activating the target tab first (and switching back
+  afterward) if it isn't already active, so a background tab still gets
+  captured correctly rather than silently returning a screenshot of
+  whatever tab *was* active - but that does mean a `screenshot` command
+  briefly switches the user's focused tab if it targets one that isn't
+  already in front.
+- **The image is stored inline in `result` as a base64 data URL** - fine
+  for occasional use, but a `moz_agent_jobs` row holding a decent-sized
+  screenshot easily runs into the tens/hundreds of KB in `jsonb`. Nothing
+  wrong today, but worth moving to Supabase Storage (store the file, put
+  only its path/URL in `result`) before this is used at any real volume.
+
+## Insert a job manually for testing
 
 Only works if the domain is enabled, and `allow_write`'d for a `submit`
 job - the `moz_agent_jobs_check_domain_permission` trigger rejects it

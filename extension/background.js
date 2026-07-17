@@ -160,6 +160,81 @@ const sendCommandsToTab = async (tabId, commands, attempts = 3) => {
   }
 }
 
+// captureVisibleTab captures whichever tab is currently active in its
+// window - not necessarily tabId. If the target tab isn't the active one,
+// briefly activate it, capture, then switch back, so a screenshot command
+// on a background tab doesn't silently capture the wrong tab's pixels.
+const captureTabScreenshot = async tabId => {
+  const tab = await browser.tabs.get(tabId)
+  const [previouslyActive] = await browser.tabs.query({ active: true, windowId: tab.windowId })
+
+  if (!tab.active) {
+    await browser.tabs.update(tabId, { active: true })
+    await new Promise(resolve => setTimeout(resolve, 100)) // let it actually paint before capturing
+  }
+
+  const dataUrl = await browser.tabs.captureVisibleTab(tab.windowId, { format: 'png' })
+
+  if (previouslyActive && previouslyActive.id !== tabId) {
+    await browser.tabs.update(previouslyActive.id, { active: true })
+  }
+
+  return dataUrl
+}
+
+const dataUrlToBlob = dataUrl => fetch(dataUrl).then(response => response.blob())
+
+const blobToDataUrl = blob => new Promise((resolve, reject) => {
+  const reader = new FileReader()
+  reader.onloadend = () => resolve(reader.result)
+  reader.onerror = () => reject(reader.error)
+  reader.readAsDataURL(blob)
+})
+
+// rect/devicePixelRatio come from content.js's measureRegion - rect is in
+// CSS pixels (what getBoundingClientRect() reports), but captureVisibleTab
+// captures at the tab's actual device pixel resolution, so the crop
+// coordinates need to be scaled by devicePixelRatio to line up.
+const cropScreenshot = async (dataUrl, rect, devicePixelRatio = 1) => {
+  const bitmap = await createImageBitmap(await dataUrlToBlob(dataUrl))
+  const width = Math.max(1, Math.round(rect.width * devicePixelRatio))
+  const height = Math.max(1, Math.round(rect.height * devicePixelRatio))
+  const canvas = new OffscreenCanvas(width, height)
+  const ctx = canvas.getContext('2d')
+  ctx.drawImage(
+    bitmap,
+    rect.x * devicePixelRatio, rect.y * devicePixelRatio, width, height,
+    0, 0, width, height
+  )
+  return blobToDataUrl(await canvas.convertToBlob({ type: 'image/png' }))
+}
+
+// like 'goto', 'screenshot' can't be forwarded to content.js as-is:
+// capturing pixels (tabs.captureVisibleTab) is a privileged API content
+// scripts can't call, while walking the DOM for the element inventory can
+// only happen there. So this round-trips to content.js for measureRegion
+// first (rect + element list, see content.js), then captures and crops
+// here.
+const runScreenshotCommand = async (tabId, command) => {
+  if (!command.selector) return { ok: false, reason: "'screenshot' command requires a selector" }
+
+  const measured = await sendCommandsToTab(tabId, [{
+    type: 'measureRegion',
+    selector: command.selector,
+    itemSelector: command.itemSelector
+  }])
+  const measurement = measured?.results?.[0]
+  if (!measurement || !measurement.ok) return measurement || { ok: false, reason: 'region measurement failed' }
+
+  try {
+    const fullDataUrl = await captureTabScreenshot(tabId)
+    const image = await cropScreenshot(fullDataUrl, measurement.rect, measurement.devicePixelRatio)
+    return { ok: true, image, rect: measurement.rect, elements: measurement.elements }
+  } catch (err) {
+    return { ok: false, reason: String(err.message || err) }
+  }
+}
+
 // splits payload.commands around 'goto' commands, since navigating away
 // tears down the tab's current content-script context mid-execution - a
 // goto can't just be one more entry in a batch sent to the page like
@@ -180,6 +255,12 @@ const runJobOnTab = async (tabId, payload) => {
   }
 
   for (const command of commands) {
+    if (command.type === 'screenshot') {
+      await flushBatch()
+      results.push(await runScreenshotCommand(tabId, command))
+      continue
+    }
+
     if (command.type !== 'goto') {
       batch.push(command)
       continue

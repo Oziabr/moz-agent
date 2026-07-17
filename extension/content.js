@@ -5,6 +5,12 @@
 //   { type: '$',  selector, name, attr? }      - single element, named
 //   { type: '$$', selector, attr? }            - all matching elements
 //   { type: 'wait', ms }                       - pause before the next command
+//   { type: 'measureRegion', selector, itemSelector? } - scrolls a region
+//     into view and reports its viewport rect plus a shallow inventory of
+//     elements inside it. Used internally by background.js's 'screenshot'
+//     command (see there) to know what to crop and what's in the crop -
+//     the pixel capture itself is a privileged API content scripts can't
+//     call, so it isn't a command a job author schedules directly.
 // 'attr' is optional on both extractors - textContent (trimmed) is used
 // by default, or the given attribute's value when present.
 // unrecognized command types (and commands missing a required field)
@@ -14,6 +20,7 @@
 const POPUP_ID = 'moz-agent-popup'
 const POPUP_DISMISS_MS = 8000
 const MAX_WAIT_MS = 30000 // caps a single 'wait' so one bad job can't hang the tab's whole queue
+const MAX_REGION_ELEMENTS = 200 // caps the element inventory so a broad itemSelector can't blow up the payload
 
 const showPopup = text => {
   let el = document.getElementById(POPUP_ID)
@@ -76,6 +83,41 @@ const runCommand = async command => {
     const waited = Math.min(ms, MAX_WAIT_MS)
     await new Promise(resolve => setTimeout(resolve, waited))
     return { ok: true, waited }
+  }
+
+  if (command.type === 'measureRegion') {
+    if (!command.selector) return { ok: false, reason: "'measureRegion' command requires a selector" }
+    const container = document.querySelector(command.selector)
+    if (!container) return { ok: false, reason: 'element not found' }
+
+    container.scrollIntoView({ block: 'center', inline: 'center' })
+    // let scroll settle and the browser paint the new position before we
+    // measure - getBoundingClientRect() right after scrollIntoView() can
+    // still reflect the pre-scroll layout on some pages.
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+
+    const containerRect = container.getBoundingClientRect()
+    const elements = Array.from(container.querySelectorAll(command.itemSelector || '*'))
+      .slice(0, MAX_REGION_ELEMENTS)
+      .map(el => {
+        const r = el.getBoundingClientRect()
+        return {
+          tag: el.tagName.toLowerCase(),
+          id: el.id || null,
+          className: typeof el.className === 'string' && el.className ? el.className : null,
+          text: el.textContent.trim().slice(0, 200),
+          // relative to the container's top-left, not the viewport - lines
+          // up directly with pixels in the cropped screenshot image
+          rect: { x: r.left - containerRect.left, y: r.top - containerRect.top, width: r.width, height: r.height }
+        }
+      })
+
+    return {
+      ok: true,
+      rect: { x: containerRect.left, y: containerRect.top, width: containerRect.width, height: containerRect.height },
+      devicePixelRatio: window.devicePixelRatio || 1,
+      elements
+    }
   }
 
   return { ok: false, reason: `unknown command type: ${command.type}` }

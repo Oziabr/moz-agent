@@ -7,9 +7,10 @@ session and lets an external agent observe/act on it.
 
 Domain-gated stub: per-domain enable/write toggles, badge indication, auth
 handoff from a project page, and a dispatch queue in the DB. Job execution
-is wired for five command types (`msg` - an on-page popup; `$` - a single
+is wired for six command types (`msg` - an on-page popup; `$` - a single
 named element extraction; `$$` - all matching elements; `wait` - a capped
-pause between commands; `goto` - navigate the tab mid-job) - see
+pause between commands; `goto` - navigate the tab mid-job; `screenshot` -
+a cropped region capture plus its element inventory) - see
 `extension/content.js` and `dispatchPendingJobs` in `background.js`. Other,
 more consequential command types (form-submission-shaped actions) aren't
 implemented yet.
@@ -28,10 +29,13 @@ implemented yet.
 - `extension/content.js` - content script that executes a job's
   `payload.commands` on the page: `msg` (on-page popup), `$` (single
   element, named), `$$` (all matching elements), `wait` (paused for `ms`,
-  capped at 30s). `goto` (navigate mid-job) is handled in
-  `background.js`'s `runJobOnTab` instead, since navigating a tab tears
-  down the page's current content-script context - see
-  [docs/db-examples.md](docs/db-examples.md) for how the split works
+  capped at 30s). `goto` (navigate mid-job) and `screenshot` (cropped
+  region capture + element inventory) are handled in `background.js`'s
+  `runJobOnTab` instead - navigation tears down the page's content-script
+  context, and pixel capture is a privileged API content scripts can't
+  call - though `screenshot` still round-trips to `content.js`'s
+  `measureRegion` for the element/rect data. See
+  [docs/db-examples.md](docs/db-examples.md) for how both work.
 - `extension/test-bridge.js` - content script used only by the test suite
 - `extension/popup/` - toggle UI
 - `project-page/` - the login + domain list page from [Auth](#auth), served
@@ -257,11 +261,15 @@ Requires a real Firefox install on the machine running the tests. Set
 
 - pick a transport for the agent connection (websocket vs native messaging)
 - add the agent server (node), with HURL tests against its HTTP/WS endpoints
-- more command types in `content.js` beyond `msg`/`$`/`$$`/`wait`/`goto`
-  (form-submission-shaped page actions) - and when the first write-shaped
-  one is added, re-checking the *current* tab's domain permissions before
-  running it, since `goto` can move a job onto a different domain than the
-  one it was scheduled/permission-checked under (see
+- more command types in `content.js`/`background.js` beyond
+  `msg`/`$`/`$$`/`wait`/`goto`/`screenshot` (form-submission-shaped page
+  actions) - and when the first write-shaped one is added, re-checking the
+  *current* tab's domain permissions before running it, since `goto` can
+  move a job onto a different domain than the one it was
+  scheduled/permission-checked under (see
   [docs/db-examples.md](docs/db-examples.md))
+- move `screenshot`'s image data out of `moz_agent_jobs.result` and into
+  Supabase Storage once used at any real volume - a base64 PNG inline in
+  `jsonb` is fine for occasional use, not for scale
 - e2e coverage for the dispatch path itself (claim race, a tab with no
   content script yet, `allow_write` revoked mid-job, a `goto` navigation)
