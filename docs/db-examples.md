@@ -218,7 +218,56 @@ values (
 The job's `result` column ends up as the array of per-command outcomes, in
 order - e.g. `[{"ok":true,"name":"title","value":"..."}, {"ok":true,"name":"description","value":"..."}, {"ok":true,"count":12,"values":["...", ...]}]`.
 
-## Insert a job manually for testing
+## Schedule a parse job that navigates mid-job
+
+`{ type: 'goto', url }` is handled by `background.js` itself, not
+`content.js` - navigating a tab tears down its current content-script
+context, so a goto can't just be one more entry in a batch sent to the
+page like the other commands are. `background.js` splits the commands
+around each `goto`: everything before it runs as one batch on the current
+page, the navigation happens via `tabs.update()` + waiting for the page to
+finish loading (capped at 15s), and everything after runs as a new batch
+once the next page is ready.
+
+```js
+const scheduleNavigateJob = domain =>
+  upsertRow('moz_agent_jobs', {
+    domain,
+    type: 'parse',
+    payload: {
+      commands: [
+        { type: '$', selector: 'h1', name: 'title' },
+        { type: 'goto', url: 'https://example.com/page-2' },
+        { type: '$', selector: 'h1', name: 'title_page_2' }
+      ]
+    }
+  })
+```
+
+```sql
+insert into moz_agent_jobs (user_id, domain, type, payload)
+values (
+  '<user-uuid>',
+  'example.com',
+  'parse',
+  '{"commands": [
+    {"type": "$", "selector": "h1", "name": "title"},
+    {"type": "goto", "url": "https://example.com/page-2"},
+    {"type": "$", "selector": "h1", "name": "title_page_2"}
+  ]}'::jsonb
+);
+```
+
+Worth knowing: the `domain`/`enabled`/`allow_write` check happens once,
+when the job is first inserted, against the domain it's scheduled under -
+not again for wherever a `goto` inside it lands. That's fine today since
+no command type performs a write; once a write-shaped command exists,
+navigating to a different domain mid-job and then writing there would
+bypass that domain's own `allow_write` gate, and needs to be closed before
+such a command is added (e.g. re-checking the *current* tab's domain
+before running a write command, not just the job's origin domain).
+
+
 
 Only works if the domain is enabled, and `allow_write`'d for a `submit`
 job - the `moz_agent_jobs_check_domain_permission` trigger rejects it

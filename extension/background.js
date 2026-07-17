@@ -118,6 +118,93 @@ const claimJob = async jobId => {
 const resolveJob = (jobId, patch) =>
   updateRows(TABLE_JOBS, { ...patch, completed_at: new Date().toISOString() }, { id: eq(jobId) })
 
+const NAV_TIMEOUT_MS = 15000
+
+// browser.tabs.update() starts a navigation; this waits for it to finish
+// loading before the next batch of commands is sent to the tab - otherwise
+// they'd race the page and mostly hit a torn-down or not-yet-ready content
+// script.
+const navigateTab = (tabId, url) => new Promise((resolve, reject) => {
+  const cleanup = () => {
+    clearTimeout(timeout)
+    browser.tabs.onUpdated.removeListener(listener)
+  }
+  const timeout = setTimeout(() => {
+    cleanup()
+    reject(new Error('navigation timed out'))
+  }, NAV_TIMEOUT_MS)
+  const listener = (updatedTabId, changeInfo) => {
+    if (updatedTabId === tabId && changeInfo.status === 'complete') {
+      cleanup()
+      resolve()
+    }
+  }
+  browser.tabs.onUpdated.addListener(listener)
+  browser.tabs.update(tabId, { url }).catch(err => {
+    cleanup()
+    reject(err)
+  })
+})
+
+// a fresh page load means a fresh content script instance, which needs a
+// beat after 'complete' to register its onMessage listener - retry rather
+// than fail the whole batch on the first attempt.
+const sendCommandsToTab = async (tabId, commands, attempts = 3) => {
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await browser.tabs.sendMessage(tabId, { type: 'runJob', payload: { commands } })
+    } catch (err) {
+      if (attempt === attempts) throw err
+      await new Promise(resolve => setTimeout(resolve, 300))
+    }
+  }
+}
+
+// splits payload.commands around 'goto' commands, since navigating away
+// tears down the tab's current content-script context mid-execution - a
+// goto can't just be one more entry in a batch sent to the page like
+// msg/$/$$/wait are. Everything before a goto runs as one batch on the
+// current page; the goto itself is handled here via tabs.update(), not
+// forwarded to content.js at all; everything after runs as the next batch
+// once the new page has loaded.
+const runJobOnTab = async (tabId, payload) => {
+  const commands = Array.isArray(payload?.commands) ? payload.commands : []
+  const results = []
+  let batch = []
+
+  const flushBatch = async () => {
+    if (batch.length === 0) return
+    const response = await sendCommandsToTab(tabId, batch)
+    results.push(...(response?.results ?? []))
+    batch = []
+  }
+
+  for (const command of commands) {
+    if (command.type !== 'goto') {
+      batch.push(command)
+      continue
+    }
+
+    await flushBatch()
+    if (!command.url) {
+      results.push({ ok: false, reason: "'goto' command requires a url" })
+      continue
+    }
+    try {
+      await navigateTab(tabId, command.url)
+      results.push({ ok: true, url: command.url })
+    } catch (err) {
+      // page state after a failed/timed-out navigation is unknown - stop
+      // here rather than run further commands against it
+      results.push({ ok: false, reason: String(err.message || err) })
+      break
+    }
+  }
+
+  await flushBatch()
+  return results
+}
+
 const dispatchJobsForDomain = async (domain, tabId) => {
   const { data: pending, error } = await selectRows(TABLE_JOBS, {
     filters: { domain: eq(domain), status: eq('pending') }
@@ -131,8 +218,8 @@ const dispatchJobsForDomain = async (domain, tabId) => {
     if (!(await claimJob(job.id))) continue // lost the race to another tab/instance
 
     try {
-      const response = await browser.tabs.sendMessage(tabId, { type: 'runJob', payload: job.payload })
-      await resolveJob(job.id, { status: 'done', result: response?.results ?? null })
+      const results = await runJobOnTab(tabId, job.payload)
+      await resolveJob(job.id, { status: 'done', result: results })
     } catch (err) {
       // most commonly: no content script on this page (e.g. about:, a
       // browser-internal page, or one that hasn't finished loading yet)

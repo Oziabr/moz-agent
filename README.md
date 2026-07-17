@@ -7,9 +7,9 @@ session and lets an external agent observe/act on it.
 
 Domain-gated stub: per-domain enable/write toggles, badge indication, auth
 handoff from a project page, and a dispatch queue in the DB. Job execution
-is wired for four command types (`msg` - an on-page popup; `$` - a single
+is wired for five command types (`msg` - an on-page popup; `$` - a single
 named element extraction; `$$` - all matching elements; `wait` - a capped
-pause between commands) - see
+pause between commands; `goto` - navigate the tab mid-job) - see
 `extension/content.js` and `dispatchPendingJobs` in `background.js`. Other,
 more consequential command types (form-submission-shaped actions) aren't
 implemented yet.
@@ -28,8 +28,10 @@ implemented yet.
 - `extension/content.js` - content script that executes a job's
   `payload.commands` on the page: `msg` (on-page popup), `$` (single
   element, named), `$$` (all matching elements), `wait` (paused for `ms`,
-  capped at 30s); dispatched to by `background.js`'s `dispatchPendingJobs`
-  on each poll tick
+  capped at 30s). `goto` (navigate mid-job) is handled in
+  `background.js`'s `runJobOnTab` instead, since navigating a tab tears
+  down the page's current content-script context - see
+  [docs/db-examples.md](docs/db-examples.md) for how the split works
 - `extension/test-bridge.js` - content script used only by the test suite
 - `extension/popup/` - toggle UI
 - `project-page/` - the login + domain list page from [Auth](#auth), served
@@ -255,7 +257,11 @@ Requires a real Firefox install on the machine running the tests. Set
 
 - pick a transport for the agent connection (websocket vs native messaging)
 - add the agent server (node), with HURL tests against its HTTP/WS endpoints
-- more command types in `content.js` beyond `msg`/`$`/`$$`/`wait`
-  (form-submission-shaped page actions), and e2e coverage for the dispatch
-  path itself (claim race, a tab with no content script yet, `allow_write`
-  revoked mid-job)
+- more command types in `content.js` beyond `msg`/`$`/`$$`/`wait`/`goto`
+  (form-submission-shaped page actions) - and when the first write-shaped
+  one is added, re-checking the *current* tab's domain permissions before
+  running it, since `goto` can move a job onto a different domain than the
+  one it was scheduled/permission-checked under (see
+  [docs/db-examples.md](docs/db-examples.md))
+- e2e coverage for the dispatch path itself (claim race, a tab with no
+  content script yet, `allow_write` revoked mid-job, a `goto` navigation)
