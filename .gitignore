@@ -1,6 +1,7 @@
 node_modules
 dist
 .test-extension
+.dev-profile
 extension/config.js
 project-page/public/config.js
 *.log
