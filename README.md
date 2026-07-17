@@ -131,7 +131,12 @@ Flow:
 3. `extension/auth-bridge.js`, a content script scoped only to
    `PROJECT_PAGE_ORIGIN` (a required host permission, distinct from the
    optional per-target-domain grants), relays that event to the background
-   script.
+   script. It injects at `document_start`, not the default `document_idle` -
+   `app.js` is a `type="module"` script, which executes deferred at roughly
+   the same phase `document_idle` would inject at, with no guaranteed
+   ordering between the two. `document_start` guarantees the listener is
+   attached before any page script runs, so the event is never dispatched
+   into an empty room.
 4. Background adopts the session via `setSession(...)` in
    `supabase-client.js`, or signs out if the event carried `null`. Either
    way it resets the domain cache, active job counts, and polling before
@@ -162,6 +167,12 @@ them back out), but it does mean tokens transit the page's DOM event system.
 If that tradeoff stops being comfortable later, swapping to a
 server-exchanged linking code is a contained change to `auth-bridge.js`
 and `handleAuthHandoff`, not a schema change.
+
+If you were already logged in on the project page tab *before* the
+extension (re)loaded - e.g. `web-ext run` restarted - that tab won't have
+`auth-bridge.js` yet. Extensions only inject content scripts into new
+navigations after install/reload, not into already-open tabs. Reload the
+project page tab once and the handoff fires normally.
 
 ## Testing
 
