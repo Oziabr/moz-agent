@@ -117,7 +117,65 @@ set status = 'failed', error = 'timeout', completed_at = now()
 where id = '<job-uuid>';
 ```
 
-## Insert a job manually for testing
+## Schedule a 'msg' popup job
+
+Runs on the next poll tick (up to a minute) against any open tab on that
+domain, showing an on-page popup - see `extension/content.js` and
+`dispatchPendingJobs` in `background.js`. `type` must be `'parse'` or
+`'crawl'` here, not `'submit'` - `msg` is just a command inside `payload`,
+independent of the job's read/write type.
+
+```js
+const scheduleMsgJob = (domain, text) =>
+  upsertRow('moz_agent_jobs', {
+    domain,
+    type: 'parse',
+    payload: { commands: [{ type: 'msg', text }] }
+  })
+```
+
+```sql
+insert into moz_agent_jobs (user_id, domain, type, payload)
+values (
+  '<user-uuid>',
+  'example.com',
+  'parse',
+  '{"commands": [{"type": "msg", "text": "hello from the agent"}]}'::jsonb
+);
+```
+
+The two samples above go through `extension/supabase-client.js` or the SQL
+editor. To schedule one from outside the extension entirely (e.g. a future
+agent server, or just curl/a scratch script) - same REST endpoint, called
+directly with `fetch`, no extension code involved:
+
+```js
+const scheduleMsgJob = async (supabaseUrl, accessToken, anonKey, domain, text) => {
+  const response = await fetch(`${supabaseUrl}/rest/v1/moz_agent_jobs`, {
+    method: 'POST',
+    headers: {
+      apikey: anonKey,
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+      Prefer: 'return=representation'
+    },
+    body: JSON.stringify({
+      domain,
+      type: 'parse',
+      payload: { commands: [{ type: 'msg', text }] }
+    })
+  })
+  if (!response.ok) throw new Error(await response.text())
+  return response.json()
+}
+```
+
+`accessToken` has to be that user's own access token (RLS scopes the insert
+to `auth.uid()`, and the domain-permission trigger checks `new.user_id`
+against that same user's `moz_agent_enabled_domains` row) - the anon key
+alone isn't enough to get past `moz_agent_jobs_owner_insert`.
+
+
 
 Only works if the domain is enabled, and `allow_write`'d for a `submit`
 job - the `moz_agent_jobs_check_domain_permission` trigger rejects it
