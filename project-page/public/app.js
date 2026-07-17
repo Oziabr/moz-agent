@@ -8,6 +8,8 @@ const els = {
   loginSection: document.getElementById('login-section'),
   loginForm: document.getElementById('login-form'),
   loginEmail: document.getElementById('login-email'),
+  loginPassword: document.getElementById('login-password'),
+  signupButton: document.getElementById('signup-button'),
   loginStatus: document.getElementById('login-status'),
   domainsSection: document.getElementById('domains-section'),
   domainsBody: document.getElementById('domains-body'),
@@ -30,32 +32,41 @@ const writeStoredSession = session => localStorage.setItem(SESSION_KEY, JSON.str
 
 const clearStoredSession = () => localStorage.removeItem(SESSION_KEY)
 
-// magic link redirects land back here with tokens in the URL hash, e.g.
-// #access_token=...&refresh_token=...&expires_in=3600&token_type=bearer
-const sessionFromRedirectHash = () => {
-  const hash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : ''
-  const params = new URLSearchParams(hash)
-  const accessToken = params.get('access_token')
-  const refreshToken = params.get('refresh_token')
-  if (!accessToken || !refreshToken) return null
+const sessionFromTokenResponse = body => ({
+  access_token: body.access_token,
+  refresh_token: body.refresh_token,
+  expires_at: Math.floor(Date.now() / 1000) + Number(body.expires_in || 3600)
+})
 
-  return {
-    access_token: accessToken,
-    refresh_token: refreshToken,
-    expires_at: Math.floor(Date.now() / 1000) + Number(params.get('expires_in') || 3600)
-  }
-}
-
-const clearRedirectHash = () => window.history.replaceState(null, '', window.location.pathname)
-
-const requestMagicLink = async email => {
-  const redirectTo = window.location.origin + window.location.pathname
-  const response = await fetch(`${AUTH_URL}/otp?redirect_to=${encodeURIComponent(redirectTo)}`, {
+// GoTrue's password grant returns tokens directly in the JSON body, so
+// unlike the old magic-link flow there's no redirect round-trip and no
+// hash-fragment parsing needed.
+const signInWithPassword = async (email, password) => {
+  const response = await fetch(`${AUTH_URL}/token?grant_type=password`, {
     method: 'POST',
     headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, create_user: true })
+    body: JSON.stringify({ email, password })
   })
-  if (!response.ok) throw new Error(await response.text())
+  const body = await response.json()
+  if (!response.ok) throw new Error(body.error_description || body.msg || JSON.stringify(body))
+  return sessionFromTokenResponse(body)
+}
+
+// /auth/v1/signup both creates the user and (when email confirmation is
+// off) returns a session in the same response - same shape as the
+// password grant above.
+const signUpWithPassword = async (email, password) => {
+  const response = await fetch(`${AUTH_URL}/signup`, {
+    method: 'POST',
+    headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password })
+  })
+  const body = await response.json()
+  if (!response.ok) throw new Error(body.error_description || body.msg || JSON.stringify(body))
+  if (!body.access_token) {
+    throw new Error('signed up - check your email to confirm the account, then log in')
+  }
+  return sessionFromTokenResponse(body)
 }
 
 const fetchDomains = async session => {
@@ -102,10 +113,26 @@ const showLoggedOut = () => {
 
 const handleLogin = async event => {
   event.preventDefault()
-  els.loginStatus.textContent = 'sending link...'
+  els.loginStatus.textContent = 'logging in...'
   try {
-    await requestMagicLink(els.loginEmail.value)
-    els.loginStatus.textContent = 'check your email for a magic link'
+    const session = await signInWithPassword(els.loginEmail.value, els.loginPassword.value)
+    writeStoredSession(session)
+    broadcastSession(session)
+    els.loginStatus.textContent = ''
+    await showLoggedIn(session)
+  } catch (err) {
+    els.loginStatus.textContent = `failed: ${err.message}`
+  }
+}
+
+const handleSignup = async () => {
+  els.loginStatus.textContent = 'signing up...'
+  try {
+    const session = await signUpWithPassword(els.loginEmail.value, els.loginPassword.value)
+    writeStoredSession(session)
+    broadcastSession(session)
+    els.loginStatus.textContent = ''
+    await showLoggedIn(session)
   } catch (err) {
     els.loginStatus.textContent = `failed: ${err.message}`
   }
@@ -124,13 +151,7 @@ const init = async () => {
     return
   }
 
-  const redirectSession = sessionFromRedirectHash()
-  if (redirectSession) {
-    writeStoredSession(redirectSession)
-    clearRedirectHash()
-  }
-
-  const session = redirectSession || readStoredSession()
+  const session = readStoredSession()
   if (session) {
     broadcastSession(session)
     await showLoggedIn(session)
@@ -140,6 +161,7 @@ const init = async () => {
 }
 
 els.loginForm.addEventListener('submit', handleLogin)
+els.signupButton.addEventListener('click', handleSignup)
 els.logoutButton.addEventListener('click', handleLogout)
 
 init()

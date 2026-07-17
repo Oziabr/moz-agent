@@ -82,11 +82,10 @@ this repo's history.
 as-is for local dev. Before deploying for real, see the note at the bottom
 of [Auth](#auth).
 
-One more one-time step: in the Supabase dashboard under
-**Authentication -> URL Configuration**, add `http://localhost:4590` to the
-allowed redirect URLs. Supabase only redirects magic links to URLs on that
-list - the login on `project-page/` will silently fail to complete
-otherwise.
+If your Supabase project has **Confirm email** enabled under
+**Authentication -> Providers -> Email**, signup won't return a session
+immediately - the user has to click the confirmation email first, then log
+in. Turn it off for local dev if you want signup to log you straight in.
 
 `extension/config.js` and `project-page/public/config.js` are required at
 runtime - nothing substitutes them in at build time. The e2e test suite
@@ -100,9 +99,9 @@ npm run run
 
 `npm run run` runs `scripts/dev.js`, which starts `project-page/` on
 `http://localhost:4590` and `web-ext run` together, and stops both on
-Ctrl-C. Open `http://localhost:4590` to log in (magic link) and see your
-enabled domains; the extension picks up the session automatically once the
-page has it (see [Auth](#auth)).
+Ctrl-C. Open `http://localhost:4590` to sign up / log in (email + password)
+and see your enabled domains; the extension picks up the session
+automatically once the page has it (see [Auth](#auth)).
 
 ## Examples
 
@@ -120,9 +119,11 @@ it's explicitly connected.
 
 Flow:
 
-1. `project-page/public/` handles real login - magic link via GoTrue's
-   `/auth/v1/otp` REST endpoint directly (`fetch`, no SDK, same approach as
-   the extension). See `project-page/public/app.js`.
+1. `project-page/public/` handles real login - email + password via
+   GoTrue's `/auth/v1/token?grant_type=password` (login) and `/auth/v1/signup`
+   (new accounts) REST endpoints directly (`fetch`, no SDK, same approach as
+   the extension). Both return the session tokens directly in the JSON
+   response body, no redirect round-trip. See `project-page/public/app.js`.
 2. On login (and on load, if a session is already stored) it dispatches:
    ```js
    window.dispatchEvent(new CustomEvent('moz-agent-session', { detail: { session } }))
