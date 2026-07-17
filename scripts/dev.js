@@ -10,25 +10,14 @@ const main = async () => {
 
   const webExt = spawn('npx', ['web-ext', 'run', '--source-dir=extension'], {
     stdio: 'inherit',
-    detached: true
+    shell: true
   })
 
   let shuttingDown = false
   const shutdown = () => {
     if (shuttingDown) return
     shuttingDown = true
-    try {
-      process.kill(-webExt.pid, 'SIGINT')
-    } catch (err) {
-      // process group already gone
-    }
-    setTimeout(() => {
-      try {
-        process.kill(-webExt.pid, 'SIGKILL')
-      } catch (err) {
-        // already exited
-      }
-    }, 5000)
+    webExt.kill()
     server.close()
   }
 

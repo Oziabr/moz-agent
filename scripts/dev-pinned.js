@@ -15,22 +15,14 @@ const PROFILE_DIR = path.resolve(__dirname, '../.dev-profile')
 // every launch, and that baseline forces a blank/homepage start page for
 // predictable dev testing - user.js takes precedence over prefs.js on
 // every start, so toggling "restore previous session" in Settings gets
-// silently clobbered back the moment web-ext relaunches Firefox, no
-// matter how cleanly the previous run shut down. A user-supplied --pref
-// wins over web-ext's own baseline on that same key, so pass it explicitly
-// rather than relying on whatever's already stored in the profile.
+// silently clobbered back the moment web-ext relaunches Firefox. A
+// user-supplied --pref wins over web-ext's own baseline on that same key,
+// so pass it explicitly rather than relying on whatever's already stored
+// in the profile.
 const FIREFOX_PREFS = {
   'browser.startup.page': 3 // 3 = always resume the previous session
 }
 
-// Important: web-ext (and Firefox itself) also needs a clean shutdown to
-// flush the session store to disk in the first place. Spawning through a
-// shell and sending a plain SIGTERM only reaches the shell process, not
-// the npx -> web-ext -> Firefox chain underneath it, so Firefox never gets
-// a graceful quit and the previous-tabs session never saves. Spawning
-// directly (no shell) in its own process group and sending SIGINT to the
-// whole group - the signal web-ext listens for to quit Firefox cleanly via
-// its remote protocol - fixes that half of it.
 const main = async () => {
   const server = createProjectPageServer()
   await new Promise(resolve => server.listen(PROJECT_PAGE_PORT, resolve))
@@ -49,27 +41,14 @@ const main = async () => {
     ...prefArgs
   ], {
     stdio: 'inherit',
-    detached: true
+    shell: true
   })
 
   let shuttingDown = false
   const shutdown = () => {
     if (shuttingDown) return
     shuttingDown = true
-    try {
-      process.kill(-webExt.pid, 'SIGINT')
-    } catch (err) {
-      // process group already gone
-    }
-    // give Firefox a moment to quit cleanly and flush its session store
-    // before falling back to a hard kill
-    setTimeout(() => {
-      try {
-        process.kill(-webExt.pid, 'SIGKILL')
-      } catch (err) {
-        // already exited
-      }
-    }, 5000)
+    webExt.kill()
     server.close()
   }
 
