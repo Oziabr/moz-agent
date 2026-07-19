@@ -269,14 +269,23 @@ before running a write command, not just the job's origin domain).
 
 ## Schedule a screenshot of a region, with its element inventory
 
-`{ type: 'screenshot', selector, itemSelector? }` returns a cropped PNG of
-just that element's area (as a data URL) plus a shallow list of the
-elements inside it - tag, id, class, trimmed text, and a rect positioned
-relative to the region's own top-left corner rather than the viewport, so
-it lines up directly with pixel coordinates in the cropped image. Capturing
-pixels is a privileged API only `background.js` can call, so it's not
-something `content.js` runs on its own the way `msg`/`$`/`$$`/`wait` are -
-see `runScreenshotCommand` and `content.js`'s `measureRegion`.
+Two ways to define the region:
+
+- **selector mode**: `{ type: 'screenshot', selector, itemSelector? }` -
+  scrolls the given element into view and captures its area.
+- **manual mode**: `{ type: 'screenshot', manual: true, itemSelector? }` -
+  no selector; shows a drag-to-select overlay on the page and waits (up to
+  60s, `MANUAL_CROP_TIMEOUT_MS`) for a person to draw the region by hand.
+  Rejects on Escape, a too-small selection, or the timeout.
+
+Either way, the result is a cropped PNG of that area (as a data URL) plus a
+shallow list of the elements inside it - tag, id, class, trimmed text, and
+a rect positioned relative to the region's own top-left corner rather than
+the viewport, so it lines up directly with pixel coordinates in the
+cropped image. Capturing pixels is a privileged API only `background.js`
+can call, so none of this is something `content.js` runs on its own the
+way `msg`/`$`/`$$`/`wait` are - see `runScreenshotCommand` in
+`background.js` and `measureRegion`/`startManualCrop` in `content.js`.
 
 ```js
 const scheduleScreenshotJob = domain =>
@@ -288,6 +297,13 @@ const scheduleScreenshotJob = domain =>
         { type: 'screenshot', selector: '#pricing-table', itemSelector: 'tr' }
       ]
     }
+  })
+
+const scheduleManualScreenshotJob = domain =>
+  upsertRow('moz_agent_jobs', {
+    domain,
+    type: 'parse',
+    payload: { commands: [{ type: 'screenshot', manual: true }] }
   })
 ```
 
@@ -301,21 +317,37 @@ values (
     {"type": "screenshot", "selector": "#pricing-table", "itemSelector": "tr"}
   ]}'::jsonb
 );
+
+-- manual mode: waits for someone to drag-select a region on the page
+insert into moz_agent_jobs (user_id, domain, type, payload)
+values (
+  '<user-uuid>',
+  'example.com',
+  'parse',
+  '{"commands": [{"type": "screenshot", "manual": true}]}'::jsonb
+);
 ```
 
 Result shape: `{"ok":true,"image":"data:image/png;base64,...","rect":{"x":0,"y":0,"width":480,"height":320},"elements":[{"tag":"tr","id":null,"className":"row","text":"...","rect":{"x":0,"y":0,"width":480,"height":40}}, ...]}`.
 
-Two things worth knowing before relying on this:
+Things worth knowing before relying on this:
 
-- **Only the visible tab in its window can actually be captured** -
-  `tabs.captureVisibleTab` only ever captures whichever tab is currently
-  active in its window. `captureTabScreenshot` in `background.js` works
-  around this by activating the target tab first (and switching back
-  afterward) if it isn't already active, so a background tab still gets
-  captured correctly rather than silently returning a screenshot of
-  whatever tab *was* active - but that does mean a `screenshot` command
+- **Only the visible tab in its window can actually be captured, and
+  manual mode needs it visible to the person too** - `tabs.captureVisibleTab`
+  only ever captures whichever tab is currently active in its window, and
+  the drag-to-select overlay obviously only means something on a tab the
+  person can see. `withActiveTab` in `background.js` handles both by
+  activating the target tab first (restoring whatever was active
+  afterward) if it isn't already - which does mean a `screenshot` command
   briefly switches the user's focused tab if it targets one that isn't
-  already in front.
+  already in front, for as long as it takes to measure/draw and capture.
+- **A pending manual crop blocks dispatch to every other tab until it
+  resolves** - `dispatchPendingJobs` processes tabs one at a time in a
+  single poll tick, so while one tab is waiting on a person to draw a
+  selection (up to the 60s timeout), jobs on other open tabs simply wait
+  their turn. Not a big deal at the current ~1-minute poll cadence, but
+  worth knowing if more command types or busier queues make that
+  sequential-per-tick model a bottleneck later.
 - **The image is stored inline in `result` as a base64 data URL** - fine
   for occasional use, but a `moz_agent_jobs` row holding a decent-sized
   screenshot easily runs into the tens/hundreds of KB in `jsonb`. Nothing

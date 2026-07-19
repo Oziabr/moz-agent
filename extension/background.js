@@ -161,25 +161,27 @@ const sendCommandsToTab = async (tabId, commands, attempts = 3) => {
 }
 
 // captureVisibleTab captures whichever tab is currently active in its
-// window - not necessarily tabId. If the target tab isn't the active one,
-// briefly activate it, capture, then switch back, so a screenshot command
-// on a background tab doesn't silently capture the wrong tab's pixels.
-const captureTabScreenshot = async tabId => {
+// window - not necessarily tabId - and a manual crop overlay is only
+// visible/interactable on the tab actually in front of the user. Both
+// need the target tab active first. Activates it if it isn't already
+// (restoring whatever was active afterward), runs fn(), and returns its
+// result.
+const withActiveTab = async (tabId, fn) => {
   const tab = await browser.tabs.get(tabId)
   const [previouslyActive] = await browser.tabs.query({ active: true, windowId: tab.windowId })
 
   if (!tab.active) {
     await browser.tabs.update(tabId, { active: true })
-    await new Promise(resolve => setTimeout(resolve, 100)) // let it actually paint before capturing
+    await new Promise(resolve => setTimeout(resolve, 100)) // let it actually paint before continuing
   }
 
-  const dataUrl = await browser.tabs.captureVisibleTab(tab.windowId, { format: 'png' })
-
-  if (previouslyActive && previouslyActive.id !== tabId) {
-    await browser.tabs.update(previouslyActive.id, { active: true })
+  try {
+    return await fn()
+  } finally {
+    if (previouslyActive && previouslyActive.id !== tabId) {
+      await browser.tabs.update(previouslyActive.id, { active: true })
+    }
   }
-
-  return dataUrl
 }
 
 const dataUrlToBlob = dataUrl => fetch(dataUrl).then(response => response.blob())
@@ -211,28 +213,41 @@ const cropScreenshot = async (dataUrl, rect, devicePixelRatio = 1) => {
 
 // like 'goto', 'screenshot' can't be forwarded to content.js as-is:
 // capturing pixels (tabs.captureVisibleTab) is a privileged API content
-// scripts can't call, while walking the DOM for the element inventory can
-// only happen there. So this round-trips to content.js for measureRegion
-// first (rect + element list, see content.js), then captures and crops
-// here.
+// scripts can't call, while walking the DOM for the element inventory (and,
+// in manual mode, the drag-to-select overlay itself) can only happen
+// there. So this round-trips to content.js for measureRegion first (rect +
+// element list, see content.js), then captures and crops here.
+//
+// selector mode (command.selector) measures a given element's area.
+// manual mode (command.manual: true, no selector) shows a drag-to-select
+// overlay and waits for a person to draw the region by hand instead - the
+// whole thing (overlay through final capture) runs under withActiveTab so
+// the tab is actually in front of the user while they draw the selection,
+// not just at the capture step at the end.
 const runScreenshotCommand = async (tabId, command) => {
-  if (!command.selector) return { ok: false, reason: "'screenshot' command requires a selector" }
-
-  const measured = await sendCommandsToTab(tabId, [{
-    type: 'measureRegion',
-    selector: command.selector,
-    itemSelector: command.itemSelector
-  }])
-  const measurement = measured?.results?.[0]
-  if (!measurement || !measurement.ok) return measurement || { ok: false, reason: 'region measurement failed' }
-
-  try {
-    const fullDataUrl = await captureTabScreenshot(tabId)
-    const image = await cropScreenshot(fullDataUrl, measurement.rect, measurement.devicePixelRatio)
-    return { ok: true, image, rect: measurement.rect, elements: measurement.elements }
-  } catch (err) {
-    return { ok: false, reason: String(err.message || err) }
+  if (!command.manual && !command.selector) {
+    return { ok: false, reason: "'screenshot' command requires a selector, or manual: true" }
   }
+
+  return withActiveTab(tabId, async () => {
+    const measured = await sendCommandsToTab(tabId, [{
+      type: 'measureRegion',
+      selector: command.selector,
+      itemSelector: command.itemSelector,
+      manual: command.manual
+    }])
+    const measurement = measured?.results?.[0]
+    if (!measurement || !measurement.ok) return measurement || { ok: false, reason: 'region measurement failed' }
+
+    try {
+      const tab = await browser.tabs.get(tabId)
+      const fullDataUrl = await browser.tabs.captureVisibleTab(tab.windowId, { format: 'png' })
+      const image = await cropScreenshot(fullDataUrl, measurement.rect, measurement.devicePixelRatio)
+      return { ok: true, image, rect: measurement.rect, elements: measurement.elements }
+    } catch (err) {
+      return { ok: false, reason: String(err.message || err) }
+    }
+  })
 }
 
 // splits payload.commands around 'goto' commands, since navigating away
