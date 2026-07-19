@@ -19,6 +19,20 @@
       .job-status-pending, .job-status-claimed { color: #b8860b; }
       .job-status-done { color: #2a8f4f; }
       .job-status-failed { color: #c0392b; }
+      .panel { margin-top: 24px; padding-top: 16px; border-top: 1px solid #eee; }
+      .panel h2 { font-size: 15px; margin-bottom: 8px; }
+      .panel-status { font-size: 12px; color: #666; min-height: 16px; }
+      .inline-form { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+      .inline-form input[type="text"] { width: auto; flex: 1; min-width: 160px; margin-bottom: 0; }
+      .inline-form label { font-size: 13px; display: flex; align-items: center; gap: 4px; }
+      .cmd-row { border: 1px solid #eee; border-radius: 4px; padding: 8px; margin-bottom: 8px; }
+      .cmd-row-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+      .cmd-fields { display: flex; gap: 8px; flex-wrap: wrap; }
+      .cmd-fields label { font-size: 12px; color: #444; display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 140px; }
+      .cmd-fields input { margin-bottom: 0; }
+      .cmd-remove { background: none; border: 1px solid #ccc; font-size: 11px; padding: 2px 8px; }
+      #raw-payload-wrap textarea { width: 100%; box-sizing: border-box; min-height: 80px; font-family: monospace; font-size: 12px; }
+      textarea { padding: 6px; }
     </style>
   </head>
   <body>
@@ -39,10 +53,52 @@
       <button id="logout-button">Log out</button>
       <table>
         <thead>
-          <tr><th>Domain</th><th>Enabled</th><th>Allow write</th></tr>
+          <tr><th>Domain</th><th>Enabled</th><th>Allow write</th><th>Actions</th></tr>
         </thead>
         <tbody id="domains-body"></tbody>
       </table>
+
+      <div class="panel">
+        <h2>Enable a domain</h2>
+        <div class="inline-form">
+          <input type="text" id="new-domain" placeholder="example.com">
+          <button type="button" id="enable-domain-button">Enable (read-only)</button>
+          <button type="button" id="enable-domain-write-button">Enable for write</button>
+        </div>
+        <p class="panel-status" id="domain-action-status"></p>
+      </div>
+
+      <div class="panel">
+        <h2>Schedule an action</h2>
+        <div class="inline-form">
+          <label>Domain
+            <input type="text" id="action-domain" list="known-domains" placeholder="example.com">
+          </label>
+          <datalist id="known-domains"></datalist>
+          <label>Type
+            <select id="job-type">
+              <option value="parse">parse</option>
+              <option value="crawl">crawl</option>
+              <option value="submit">submit</option>
+            </select>
+          </label>
+        </div>
+
+        <div id="command-builder">
+          <div id="commands-container"></div>
+          <button type="button" id="add-command-button">+ Add command</button>
+        </div>
+
+        <div id="raw-payload-wrap" hidden>
+          <p class="panel-status">submit jobs have no fixed command schema yet - provide the raw JSON payload (e.g. <code>{"form": "#contact"}</code>).</p>
+          <textarea id="raw-payload" placeholder='{"form": "#contact"}'></textarea>
+        </div>
+
+        <p style="margin-top: 10px;">
+          <button type="button" id="schedule-action-button">Schedule</button>
+        </p>
+        <p class="panel-status" id="action-status"></p>
+      </div>
     </section>
 
     <script type="module" src="app.js"></script>
